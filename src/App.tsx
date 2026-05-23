@@ -489,10 +489,8 @@ export default function App() {
       {/* ── Sidebar ── */}
       <aside className="w-52 shrink-0 flex flex-col border-r border-border">
         <div className="h-12 px-4 flex items-center gap-2.5 border-b border-border">
-          <div className="w-5 h-5 rounded-md bg-foreground flex items-center justify-center shrink-0 transition-transform duration-200 hover:scale-110 active:scale-95">
-            <span className="text-background text-[10px] font-black leading-none tracking-tight">s</span>
-          </div>
-          <span className="text-sm font-semibold tracking-tight">sonion</span>
+          <img src="/logo.png" alt="xype" className="w-5 h-5 rounded-md shrink-0" />
+          <span className="text-sm font-semibold tracking-tight">xype</span>
         </div>
 
         <nav className="flex-1 p-2 space-y-px">
@@ -1145,16 +1143,30 @@ export default function App() {
                   <div className="anim-fade space-y-4" style={{ animationDelay: "200ms" }}>
                     <div className="border-t border-border" />
                     {renderProcessing ? (
-                      <div className="space-y-2.5">
+                      <div className="space-y-3">
+                        {renderFile && (
+                          <div className="rounded-xl overflow-hidden border border-border bg-black/50">
+                            <video
+                              src={convertFileSrc(renderFile)}
+                              controls
+                              muted
+                              autoPlay
+                              loop
+                              className="w-full max-h-[180px]"
+                              preload="metadata"
+                            />
+                          </div>
+                        )}
                         <div className="h-1.5 w-full rounded-full bg-accent/40 overflow-hidden">
                           <div
                             className="h-full bg-foreground rounded-full transition-[width] duration-300 ease-out"
                             style={{ width: `${Math.round((renderProgress ?? 0) * 100)}%` }}
                           />
                         </div>
-                        <p className="text-[12px] text-center text-muted-foreground tabular-nums">
-                          {Math.round((renderProgress ?? 0) * 100)}%
-                        </p>
+                        <div className="flex items-center justify-between text-[12px] text-muted-foreground tabular-nums">
+                          <span>{Math.round((renderProgress ?? 0) * 100)}%</span>
+                          <span className="text-[11px] opacity-60">{renderEncoder === "h264_nvenc" ? "NVENC" : "libx264"}</span>
+                        </div>
                       </div>
                     ) : (
                       <button type="button" onClick={processRender} disabled={!canRender}

@@ -39,7 +39,7 @@ fn config_path(app: &tauri::AppHandle) -> PathBuf {
     app.path()
         .app_data_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
-        .join("sonion.json")
+        .join("xype.json")
 }
 
 #[tauri::command]
@@ -273,7 +273,7 @@ async fn export_segments(
     let mut temp_files: Vec<PathBuf> = Vec::new();
 
     for (i, seg) in segments.iter().enumerate() {
-        let temp_path = temp_dir.join(format!("sonion_seg_{i}.mp4"));
+        let temp_path = temp_dir.join(format!("xype_seg_{i}.mp4"));
         if temp_path.exists() { let _ = fs::remove_file(&temp_path); }
         let result = ffmpeg_cmd(&ffmpeg)
             .arg("-y")
@@ -306,7 +306,7 @@ async fn export_segments(
         }
     }
 
-    let list_path = temp_dir.join("sonion_concat.txt");
+    let list_path = temp_dir.join("xype_concat.txt");
     let list_content: String = temp_files.iter()
         .map(|p| format!("file '{}'\n", p.to_str().unwrap_or("").replace('\\', "/")))
         .collect();
@@ -504,8 +504,14 @@ async fn render_video(
         .arg("-i").arg(&input)
         .arg("-vf").arg(&filter_str)
         .arg("-c:v").arg(codec)
-        .arg(quality_flag).arg(crf.to_string())
-        .arg("-preset").arg(preset);
+        .arg(quality_flag).arg(crf.to_string());
+
+    if is_nvenc {
+        cmd.arg("-pix_fmt").arg("yuv420p")
+            .arg("-preset").arg(preset);
+    } else {
+        cmd.arg("-preset").arg(preset);
+    }
 
     if let Some(ref af) = audio_filter {
         cmd.arg("-af").arg(af).arg("-c:a").arg("aac");
