@@ -37,3 +37,4 @@ jobs:
           releaseDraft: false
           prerelease: false
           updaterJsonKeepUniversal: false
+          includeUpdaterJson: true
