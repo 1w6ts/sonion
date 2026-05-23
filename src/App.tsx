@@ -1345,13 +1345,15 @@ function ExportSuccessModal({ data, onClose, onReveal }: {
   onReveal: () => void;
 }) {
   const fileName = data.outputPath.split(/[\\/]/).pop() ?? data.outputPath;
+  const isVideo = /\.(mp4|mov|mkv|avi|webm|m4v)$/i.test(data.outputPath);
+  const videoSrc = isVideo ? convertFileSrc(data.outputPath) : null;
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[3px] anim-fade"
       onClick={onClose}
     >
       <div
-        className="anim-scale-in bg-card border border-border rounded-2xl p-6 w-[380px] shadow-2xl space-y-5"
+        className="anim-scale-in bg-card border border-border rounded-2xl p-6 w-[420px] shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-start gap-3.5">
@@ -1365,6 +1367,18 @@ function ExportSuccessModal({ data, onClose, onReveal }: {
             </p>
           </div>
         </div>
+
+        {videoSrc && (
+          <div className="rounded-xl overflow-hidden border border-border bg-black/50">
+            <video
+              src={videoSrc}
+              controls
+              className="w-full max-h-[280px]"
+              preload="metadata"
+            />
+          </div>
+        )}
+
         <div className="flex gap-2">
           <button
             type="button"

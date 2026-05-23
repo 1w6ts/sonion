@@ -5,6 +5,18 @@ use std::fs;
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+fn ffmpeg_cmd(path: &PathBuf) -> Command {
+    let mut cmd = Command::new(path);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProcessResult {
     pub success: bool,
@@ -65,7 +77,7 @@ fn validate_ffmpeg(ffmpeg_path: &str) -> bool {
     if !path.exists() {
         return false;
     }
-    match Command::new(&path).arg("-version").output() {
+    match ffmpeg_cmd(&path).arg("-version").output() {
         Ok(output) => output.status.success(),
         Err(_) => false,
     }
@@ -78,7 +90,7 @@ fn get_video_fps(ffmpeg_path: &str, video_path: &str) -> Result<f64, String> {
     if let Some(parent) = ffmpeg.parent() {
         let ffprobe = parent.join("ffprobe.exe");
         if ffprobe.exists() {
-            if let Ok(output) = Command::new(&ffprobe)
+            if let Ok(output) = ffmpeg_cmd(&ffprobe)
                 .args([
                     "-v", "0",
                     "-select_streams", "v:0",
@@ -104,7 +116,7 @@ fn get_video_fps(ffmpeg_path: &str, video_path: &str) -> Result<f64, String> {
         }
     }
 
-    let output = Command::new(&ffmpeg)
+    let output = ffmpeg_cmd(&ffmpeg)
         .arg("-i")
         .arg(video_path)
         .output()
@@ -159,7 +171,7 @@ async fn process_video(
 
     let scale_str = scale.to_string();
 
-    let result = Command::new(&ffmpeg)
+    let result = ffmpeg_cmd(&ffmpeg)
         .arg("-y")
         .arg("-itsscale").arg(&scale_str)
         .arg("-i").arg(&input)
@@ -232,7 +244,7 @@ async fn export_segments(
         let seg = &segments[0];
         let output_path = input_dir.join(format!("{}_trim.mp4", input_name));
         if output_path.exists() { let _ = fs::remove_file(&output_path); }
-        let result = Command::new(&ffmpeg)
+        let result = ffmpeg_cmd(&ffmpeg)
             .arg("-y")
             .arg("-ss").arg(seg.start.to_string())
             .arg("-to").arg(seg.end.to_string())
@@ -263,7 +275,7 @@ async fn export_segments(
     for (i, seg) in segments.iter().enumerate() {
         let temp_path = temp_dir.join(format!("sonion_seg_{i}.mp4"));
         if temp_path.exists() { let _ = fs::remove_file(&temp_path); }
-        let result = Command::new(&ffmpeg)
+        let result = ffmpeg_cmd(&ffmpeg)
             .arg("-y")
             .arg("-ss").arg(seg.start.to_string())
             .arg("-to").arg(seg.end.to_string())
@@ -306,7 +318,7 @@ async fn export_segments(
     let output_path = input_dir.join(format!("{}_export.mp4", input_name));
     if output_path.exists() { let _ = fs::remove_file(&output_path); }
 
-    let result = Command::new(&ffmpeg)
+    let result = ffmpeg_cmd(&ffmpeg)
         .arg("-y")
         .arg("-f").arg("concat")
         .arg("-safe").arg("0")
@@ -337,7 +349,7 @@ fn probe_duration(ffmpeg: &PathBuf, input: &PathBuf) -> f64 {
     if let Some(parent) = ffmpeg.parent() {
         let ffprobe = parent.join("ffprobe.exe");
         if ffprobe.exists() {
-            if let Ok(out) = Command::new(&ffprobe)
+            if let Ok(out) = ffmpeg_cmd(&ffprobe)
                 .args(["-v", "0", "-show_entries", "format=duration",
                        "-of", "default=noprint_wrappers=1:nokey=1",
                        input.to_str().unwrap_or("")])
@@ -349,7 +361,7 @@ fn probe_duration(ffmpeg: &PathBuf, input: &PathBuf) -> f64 {
             }
         }
     }
-    if let Ok(out) = Command::new(ffmpeg).arg("-i").arg(input).output() {
+    if let Ok(out) = ffmpeg_cmd(ffmpeg).arg("-i").arg(input).output() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         for line in stderr.lines() {
             if let Some(pos) = line.find("Duration: ") {
@@ -487,7 +499,7 @@ async fn render_video(
     let use_timescale = (effective_timescale - 1.0).abs() > 0.001;
     let audio_filter = if use_timescale { Some(audio_tempo_filter(effective_timescale)) } else { None };
 
-    let mut cmd = Command::new(&ffmpeg);
+    let mut cmd = ffmpeg_cmd(&ffmpeg);
     cmd.arg("-y")
         .arg("-i").arg(&input)
         .arg("-vf").arg(&filter_str)
