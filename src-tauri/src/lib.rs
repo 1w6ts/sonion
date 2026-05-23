@@ -471,10 +471,9 @@ async fn render_video(
     let mut filters: Vec<String> = Vec::new();
 
     if interpolate_fps > 0 {
-        filters.push(format!(
-            "minterpolate=fps={}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1",
-            interpolate_fps
-        ));
+        // FFmpeg minterpolate is too slow for real-time use; duplicate frames to target fps
+        // True motion interpolation (like smoothie's SVPFlow) requires VapourSynth
+        filters.push(format!("fps={}", interpolate_fps));
     }
     if frames_to_blend > 1 {
         let weights = blend_weights(frames_to_blend, &blend_weighting);
@@ -500,7 +499,8 @@ async fn render_video(
     let audio_filter = if use_timescale { Some(audio_tempo_filter(effective_timescale)) } else { None };
 
     let mut cmd = ffmpeg_cmd(&ffmpeg);
-    cmd.arg("-y")
+    cmd.stdin(Stdio::null())
+        .arg("-y")
         .arg("-i").arg(&input)
         .arg("-vf").arg(&filter_str)
         .arg("-c:v").arg(codec)
