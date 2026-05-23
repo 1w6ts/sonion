@@ -115,7 +115,7 @@ export default function App() {
   const [customWeights, setCustomWeightsState] = useState(() => localStorage.getItem("smth.customWeights") ?? "");
   const setCustomWeights = (v: string) => { setCustomWeightsState(v); localStorage.setItem("smth.customWeights", v); };
 
-  const handleFileRef = useRef<(path: string) => void>(() => {});
+  const handleFileRef = useRef<(path: string) => void>(() => { });
 
   useEffect(() => {
     invoke<FpsConfig[]>("get_fps_configs").then(setFpsConfigs).catch(console.error);
@@ -159,8 +159,8 @@ export default function App() {
   }, [ffmpegPath]);
 
   // ── Trim: markIn / markOut with stable refs ──
-  const markInRef = useRef<() => void>(() => {});
-  const markOutRef = useRef<() => void>(() => {});
+  const markInRef = useRef<() => void>(() => { });
+  const markOutRef = useRef<() => void>(() => { });
 
   const markIn = () => {
     const v = trimVideoRef.current;
@@ -927,6 +927,8 @@ export default function App() {
                         { label: "50%", v: 0.5 },
                         { label: "75%", v: 0.75 },
                         { label: "100%", v: 1.0 },
+                        { label: "150%", v: 1.5 },
+                        { label: "200%", v: 2.0 },
                       ].map(({ label, v }) => (
                         <button key={v} type="button" onClick={() => setBlurAmount(v)}
                           className={cn(
@@ -940,9 +942,9 @@ export default function App() {
                       ))}
                       <div className="flex items-center gap-1">
                         <input
-                          type="number" min="0.01" max="1" step="0.05"
+                          type="number" min="0.01" max="3" step="0.05"
                           value={blurAmount}
-                          onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v > 0 && v <= 1) setBlurAmount(v); }}
+                          onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v > 0 && v <= 3) setBlurAmount(v); }}
                           className="w-14 h-10 px-2 text-center font-mono text-[13px] bg-transparent border border-border rounded-xl outline-none focus:border-ring tabular-nums"
                         />
                       </div>
@@ -981,11 +983,11 @@ export default function App() {
                     <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-widest">Weighting</p>
                     <div className="flex gap-2">
                       {[
-                        { id: "equal",    label: "Equal",    hint: "uniform" },
+                        { id: "equal", label: "Equal", hint: "uniform" },
                         { id: "gaussian", label: "Gaussian", hint: "bell curve" },
-                        { id: "pyramid",  label: "Pyramid",  hint: "triangle" },
-                        { id: "vegas",    label: "Vegas",    hint: "ascending" },
-                        { id: "custom",   label: "Custom",   hint: "manual" },
+                        { id: "pyramid", label: "Pyramid", hint: "triangle" },
+                        { id: "vegas", label: "Vegas", hint: "ascending" },
+                        { id: "custom", label: "Custom", hint: "manual" },
                       ].map(({ id, label, hint }) => (
                         <button key={id} type="button" onClick={() => setBlendWeighting(id)}
                           className={cn(
@@ -1096,8 +1098,8 @@ export default function App() {
                         <div className="flex gap-2">
                           {[
                             { label: "High", crf: 17 },
-                            { label: "Med",  crf: 22 },
-                            { label: "Low",  crf: 28 },
+                            { label: "Med", crf: 22 },
+                            { label: "Low", crf: 28 },
                           ].map(({ label, crf }) => (
                             <button key={crf} type="button" onClick={() => setRenderCrf(crf)}
                               className={cn(
