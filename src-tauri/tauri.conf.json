@@ -48,6 +48,13 @@
       "endpoints": [
         "https://github.com/1w6ts/sonion/releases/latest/download/latest.json"
       ]
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "xype"
+        ]
+      }
     }
   }
 }

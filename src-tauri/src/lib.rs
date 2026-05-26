@@ -5,11 +5,14 @@ use std::fs;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{Emitter, Manager};
+use tauri_plugin_deep_link::DeepLinkExt;
+use url::Url;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+const API_BASE: &str = "https://xype.gg"; // set your backend URL, e.g. "https://api.xype.gg"
 
 fn ffmpeg_cmd(path: &PathBuf) -> Command {
     let mut cmd = Command::new(path);
@@ -73,6 +76,228 @@ pub struct ProcessResult {
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct AppConfig {
     pub ffmpeg_path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AuthSession {
+    pub token: String,
+    pub user_id: String,
+    pub email: String,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PublicAuthSession {
+    pub user_id: String,
+    pub email: String,
+    pub expires_at: String,
+}
+
+impl From<&AuthSession> for PublicAuthSession {
+    fn from(session: &AuthSession) -> Self {
+        Self {
+            user_id: session.user_id.clone(),
+            email: session.email.clone(),
+            expires_at: session.expires_at.clone(),
+        }
+    }
+}
+
+fn auth_session_path() -> Result<PathBuf, String> {
+    let dir = std::env::var("LOCALAPPDATA")
+        .or_else(|_| std::env::var("APPDATA"))
+        .map_err(|e| e.to_string())?;
+    let path = PathBuf::from(dir).join("xype").join("auth.json");
+    Ok(path)
+}
+
+fn store_auth_session(session: &AuthSession) -> Result<(), String> {
+    let path = auth_session_path()?;
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let data = serde_json::to_string(session).map_err(|e| e.to_string())?;
+    fs::write(&path, data).map_err(|e| e.to_string())?;
+    eprintln!("[auth] stored session to file: {:?}", path);
+    Ok(())
+}
+
+fn load_auth_session_inner() -> Result<Option<AuthSession>, String> {
+    let path = auth_session_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let data = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    eprintln!("[auth] loaded session from file: {:?}", path);
+    serde_json::from_str(&data).map(Some).map_err(|e| e.to_string())
+}
+
+fn pending_auth_file() -> Result<PathBuf, String> {
+    let dir = std::env::var("LOCALAPPDATA")
+        .or_else(|_| std::env::var("APPDATA"))
+        .map_err(|e| e.to_string())?;
+    Ok(PathBuf::from(dir).join("xype").join(".pending_auth"))
+}
+
+fn flush_pending_auth() -> Result<Option<AuthSession>, String> {
+    let path = pending_auth_file()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let url = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        let _ = fs::remove_file(&path);
+        return Ok(None);
+    }
+    eprintln!("[auth] found pending auth file, url={}", trimmed);
+    let session = parse_auth_callback(trimmed)?;
+    store_auth_session(&session)?;
+    let _ = fs::remove_file(&path);
+    eprintln!("[auth] flushed pending auth to keyring");
+    Ok(Some(session))
+}
+
+fn parse_auth_callback(url: &str) -> Result<AuthSession, String> {
+    let parsed = Url::parse(url).map_err(|e| e.to_string())?;
+    let path = parsed.path();
+    eprintln!("[auth] received deep link: {} | scheme={} host={:?} path={}", url, parsed.scheme(), parsed.host_str(), path);
+    if parsed.scheme() != "xype" || parsed.host_str() != Some("auth") || (path != "/callback" && path != "/callback/") {
+        return Err(format!("Ignored non-auth deep link: path={}", path));
+    }
+
+    let mut token = None;
+    let mut user_id = None;
+    let mut email = None;
+    let mut expires_at = None;
+
+    for (key, value) in parsed.query_pairs() {
+        match key.as_ref() {
+            "token" => token = Some(value.into_owned()),
+            "user_id" => user_id = Some(value.into_owned()),
+            "email" => email = Some(value.into_owned()),
+            "expires_at" => expires_at = Some(value.into_owned()),
+            _ => {}
+        }
+    }
+
+    Ok(AuthSession {
+        token: token.filter(|v| !v.is_empty()).ok_or_else(|| "Auth callback missing token".to_string())?,
+        user_id: user_id.filter(|v| !v.is_empty()).ok_or_else(|| "Auth callback missing user_id".to_string())?,
+        email: email.filter(|v| !v.is_empty()).ok_or_else(|| "Auth callback missing email".to_string())?,
+        expires_at: expires_at.filter(|v| !v.is_empty()).ok_or_else(|| "Auth callback missing expires_at".to_string())?,
+    })
+}
+
+fn handle_auth_deep_link(app: &tauri::AppHandle, url: &str) -> Result<(), String> {
+    let session = parse_auth_callback(url)?;
+    store_auth_session(&session)?;
+    eprintln!("[auth] stored session for user_id={}", session.user_id);
+    app.emit("auth-session-updated", PublicAuthSession::from(&session)).map_err(|e| e.to_string())?;
+    eprintln!("[auth] emitted auth-session-updated event");
+    Ok(())
+}
+
+#[tauri::command]
+fn get_auth_session() -> Result<Option<PublicAuthSession>, String> {
+    load_auth_session_inner().map(|session| session.as_ref().map(PublicAuthSession::from))
+}
+
+#[tauri::command]
+fn logout_auth_session() -> Result<(), String> {
+    let path = auth_session_path()?;
+    if path.exists() {
+        fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EntitlementsResp {
+    user_id: String,
+    email: String,
+    is_paid: bool,
+    subscription: Option<serde_json::Value>,
+    expires_at: Option<String>,
+}
+
+async fn fetch_subscription_status(token: &str) -> Result<bool, String> {
+    if API_BASE.is_empty() {
+        return Ok(true);
+    }
+    let client = reqwest::Client::new();
+    let res = client
+        .get(format!("{}/api/me/entitlements", API_BASE))
+        .header("Authorization", format!("Bearer {}", token))
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+        return Err(format!("Subscription check failed: HTTP {}", res.status()));
+    }
+    let body: EntitlementsResp = res.json().await.map_err(|e| e.to_string())?;
+    Ok(body.is_paid)
+}
+
+#[derive(Debug, Serialize)]
+struct AccessCheck {
+    access: bool,
+    auth: bool,
+    subscription: bool,
+    error: Option<String>,
+}
+
+#[tauri::command]
+async fn check_app_access_detailed() -> Result<AccessCheck, String> {
+    let _ = flush_pending_auth();
+    let session = match load_auth_session_inner() {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            return Ok(AccessCheck {
+                access: false,
+                auth: false,
+                subscription: false,
+                error: Some("No saved session — log in via browser".to_string()),
+            });
+        }
+        Err(e) => {
+            return Ok(AccessCheck {
+                access: false,
+                auth: false,
+                subscription: false,
+                error: Some(format!("Keyring error: {}", e)),
+            });
+        }
+    };
+
+    match fetch_subscription_status(&session.token).await {
+        Ok(true) => Ok(AccessCheck {
+            access: true,
+            auth: true,
+            subscription: true,
+            error: None,
+        }),
+        Ok(false) => Ok(AccessCheck {
+            access: false,
+            auth: true,
+            subscription: false,
+            error: Some("Subscription inactive / not paid".to_string()),
+        }),
+        Err(e) => Ok(AccessCheck {
+            access: false,
+            auth: true,
+            subscription: false,
+            error: Some(format!("Subscription check failed: {}", e)),
+        }),
+    }
+}
+
+#[tauri::command]
+async fn check_app_access() -> Result<bool, String> {
+    let detail = check_app_access_detailed().await?;
+    Ok(detail.access)
 }
 
 fn config_path(app: &tauri::AppHandle) -> PathBuf {
@@ -1106,6 +1331,24 @@ async fn reveal_in_explorer(path: String) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Windows deep-link second-instance shortcut: search ALL args for a xype:// URL,
+    // write it to a pending-auth file, then exit. The running instance polls the file.
+    let args: Vec<String> = std::env::args().collect();
+    eprintln!("[auth] startup args: {:?}", args);
+    if let Some(url) = args.iter().map(|a| a.trim_matches('"').trim()).find(|a| a.starts_with("xype://")) {
+        eprintln!("[auth] second-instance caught URL: {}", url);
+        if !url.is_empty() {
+            if let Ok(path) = pending_auth_file() {
+                if let Some(parent) = path.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                let _ = fs::write(&path, url);
+                eprintln!("[auth] wrote pending auth file: {:?}", path);
+            }
+        }
+        std::process::exit(0);
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -1113,6 +1356,30 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_deep_link::init())
+        .setup(|app| {
+            #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
+            app.deep_link().register_all()?;
+
+            let handle = app.handle().clone();
+            if let Some(urls) = app.deep_link().get_current()? {
+                for url in urls {
+                    if let Err(err) = handle_auth_deep_link(&handle, url.as_str()) {
+                        eprintln!("deep link auth failed: {}", err);
+                    }
+                }
+            }
+
+            app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    if let Err(err) = handle_auth_deep_link(&handle, url.as_str()) {
+                        eprintln!("deep link auth failed: {}", err);
+                    }
+                }
+            });
+
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             validate_ffmpeg,
             get_video_fps,
@@ -1125,6 +1392,10 @@ pub fn run() {
             patch_tiktok_optimizer,
             compress_for_discord,
             reveal_in_explorer,
+            get_auth_session,
+            logout_auth_session,
+            check_app_access,
+            check_app_access_detailed,
             load_config,
             save_config,
         ])

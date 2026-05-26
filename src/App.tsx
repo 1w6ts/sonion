@@ -3,6 +3,7 @@ import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { open } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { check as checkUpdate, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -27,6 +28,7 @@ import {
 } from "react-icons/pi";
 
 interface ProcessResult { success: boolean; message: string; output_path?: string; }
+interface PublicAuthSession { user_id: string; email: string; expires_at: string; }
 interface Seg { id: string; inPoint: number; outPoint: number; }
 type View = "clean" | "trim" | "render" | "discord" | "settings";
 
@@ -54,6 +56,9 @@ export default function App() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [appVersion, setAppVersion] = useState("");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [authSession, setAuthSession] = useState<PublicAuthSession | null>(null);
+  const [appAccess, setAppAccess] = useState<boolean | null>(null);
+  const [accessError, setAccessError] = useState<string>("");
 
   // ── Updater state ──
   type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "ready" | "uptodate" | "error";
@@ -137,6 +142,39 @@ export default function App() {
   useEffect(() => {
     getVersion().then(setAppVersion).catch(() => setAppVersion(""));
   }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    invoke<PublicAuthSession | null>("get_auth_session")
+      .then(setAuthSession)
+      .catch(() => setAuthSession(null));
+    listen<PublicAuthSession>("auth-session-updated", (event) => {
+      setAuthSession(event.payload);
+      invoke<{ access: boolean; error?: string }>("check_app_access_detailed")
+        .then((res) => { setAppAccess(res.access); setAccessError(res.error || ""); })
+        .catch(() => { setAppAccess(false); setAccessError("App access check failed"); });
+      setView("settings");
+    }).then((fn) => { unlisten = fn; });
+    return () => { unlisten?.(); };
+  }, []);
+
+  useEffect(() => {
+    invoke<{ access: boolean; error?: string }>("check_app_access_detailed")
+      .then((res) => { setAppAccess(res.access); setAccessError(res.error || ""); })
+      .catch(() => { setAppAccess(false); setAccessError("App access check failed"); });
+  }, []);
+
+  useEffect(() => {
+    if (appAccess !== false) return;
+    const id = setInterval(async () => {
+      try {
+        const res = await invoke<{ access: boolean; error?: string }>("check_app_access_detailed");
+        setAppAccess(res.access);
+        setAccessError(res.error || "");
+      } catch { setAppAccess(false); setAccessError("App access check failed"); }
+    }, 2000);
+    return () => clearInterval(id);
+  }, [appAccess]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -296,6 +334,15 @@ export default function App() {
       const sel = await open({ multiple: false, filters: [{ name: "Executable", extensions: ["exe"] }] });
       if (typeof sel === "string") saveFfmpegPath(sel);
     } catch (e) { console.error(e); }
+  };
+
+  const logoutAuth = async () => {
+    try {
+      await invoke("logout_auth_session");
+      setAuthSession(null);
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const handleTrimFile = (path: string) => {
@@ -1323,6 +1370,33 @@ export default function App() {
                   </div>
                 </section>
 
+                <section className="anim-slide-up rounded-lg border border-border bg-card/30" style={{ animationDelay: "15ms" }}>
+                  <div className="border-b border-border px-4 py-3">
+                    <p className="text-[13px] font-medium">Account</p>
+                    <p className="mt-1 text-[12px] text-muted-foreground">Auth callbacks are handled by Rust through xype://auth/callback.</p>
+                  </div>
+                  <div className="p-4 space-y-3">
+                    {authSession ? (
+                      <>
+                        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
+                          <p className="text-[13px] font-medium text-emerald-400">Logged in</p>
+                          <p className="mt-1 text-[12px] text-muted-foreground">{authSession.email}</p>
+                          <p className="mt-1 text-[11px] font-mono text-muted-foreground/45 truncate">{authSession.user_id}</p>
+                        </div>
+                        <button type="button" onClick={logoutAuth}
+                          className="motion-press h-9 px-4 text-[13px] border border-border rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/40">
+                          Log out
+                        </button>
+                      </>
+                    ) : (
+                      <div className="rounded-xl border border-border bg-accent/5 px-4 py-3">
+                        <p className="text-[13px] text-muted-foreground">Not logged in.</p>
+                        <p className="mt-1 text-[12px] text-muted-foreground/50">Open a valid auth deep link to sign in.</p>
+                      </div>
+                    )}
+                  </div>
+                </section>
+
                 <section className="anim-slide-up rounded-lg border border-border bg-card/30 space-y-4 p-4" style={{ animationDelay: "30ms" }}>
                   <div className="flex items-center justify-between">
                     <p className="text-[13px] font-medium">Updates</p>
@@ -1420,6 +1494,42 @@ export default function App() {
           onClose={() => setSuccessModal(null)}
           onReveal={() => { revealInExplorer(successModal.outputPath); setSuccessModal(null); }}
         />
+      )}
+
+      {appAccess === false && (
+        <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-background/95 backdrop-blur-sm">
+          <div className="rounded-xl border border-border bg-card/40 px-6 py-8 text-center max-w-sm space-y-5">
+            <div className="space-y-1">
+              <p className="text-lg font-semibold">Access required</p>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                You must be logged in with an active subscription to use xype.
+              </p>
+              {accessError && (
+                <p className="text-[11px] text-destructive/80 font-mono break-all bg-destructive/5 rounded-md px-2 py-1.5">
+                  {accessError}
+                </p>
+              )}
+            </div>
+            <div className="flex gap-3 justify-center">
+              <button type="button" onClick={() => openUrl("http://localhost:3000/login")}
+                className="motion-press h-9 px-4 text-[13px] rounded-lg bg-foreground text-background hover:bg-foreground/90"
+              >
+                Log in
+              </button>
+              <button type="button" onClick={async () => {
+                try {
+                  const res = await invoke<{ access: boolean; error?: string }>("check_app_access_detailed");
+                  setAppAccess(res.access);
+                  setAccessError(res.error || "");
+                } catch { setAppAccess(false); setAccessError("Check failed"); }
+              }}
+                className="motion-press h-9 px-4 text-[13px] border border-border rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/40"
+              >
+                Retry
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
