@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { check as checkUpdate, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { cn } from "@/lib/utils";
-import { SiTiktok } from "react-icons/si";
+import { SiDiscord } from "react-icons/si";
 import {
   PiFilmSlateDuotone,
   PiFilmReelDuotone,
@@ -25,12 +26,19 @@ import {
   PiArrowCounterClockwiseDuotone,
 } from "react-icons/pi";
 
-interface FpsConfig { fps: number; scale: number; }
 interface ProcessResult { success: boolean; message: string; output_path?: string; }
 interface Seg { id: string; inPoint: number; outPoint: number; }
-type View = "tiktok-quality" | "tiktok-clean" | "trim" | "render" | "settings";
+type View = "clean" | "trim" | "render" | "discord" | "settings";
 
 const VIDEO_EXTS = ["mp4", "mov", "mkv", "avi", "webm", "m4v"];
+
+const VIEW_META: Record<View, { title: string; sub?: string; icon: React.ReactNode }> = {
+  discord: { title: "Discord Compress", sub: "8 MB Target", icon: <SiDiscord /> },
+  clean: { title: "TikTok Optimizer", sub: "Metadata Patch", icon: <PiSparkleDuotone /> },
+  trim: { title: "Trim", sub: "Lossless Cut", icon: <PiScissorsDuotone /> },
+  render: { title: "Motion Blur", sub: "Frame Blending", icon: <PiFilmReelDuotone /> },
+  settings: { title: "Settings", icon: <PiGearSixDuotone /> },
+};
 
 const fmt = (t: number) => {
   if (!isFinite(t) || isNaN(t)) return "0:00.0";
@@ -40,10 +48,12 @@ const fmt = (t: number) => {
 };
 
 export default function App() {
-  const [view, setView] = useState<View>("tiktok-quality");
+  const [view, setView] = useState<View>("discord");
   const [ffmpegPath, setFfmpegPath] = useState("");
   const [ffmpegValid, setFfmpegValid] = useState<boolean | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // ── Updater state ──
   type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "ready" | "uptodate" | "error";
@@ -53,16 +63,12 @@ export default function App() {
   const [updateError, setUpdateError] = useState("");
   const pendingUpdate = useRef<Update | null>(null);
 
-  // ── TikTok Quality state ──
-  const [fpsConfigs, setFpsConfigs] = useState<FpsConfig[]>([]);
-  const [inputFile, setInputFile] = useState("");
-  const [detectedFps, setDetectedFps] = useState<number | null>(null);
-  const [detectingFps, setDetectingFps] = useState(false);
-  const [selectedFps, setSelectedFps] = useState<number | null>(null);
-  const [processing, setProcessing] = useState(false);
-  const [result, setResult] = useState<ProcessResult | null>(null);
+  const navigate = (nextView: View) => {
+    if (nextView === view) return;
+    setView(nextView);
+  };
 
-  // ── TikTok Clean state ──
+  // ── Clean state ──
   const [cleanFile, setCleanFile] = useState("");
   const [cleanProcessing, setCleanProcessing] = useState(false);
   const [cleanResult, setCleanResult] = useState<ProcessResult | null>(null);
@@ -79,15 +85,24 @@ export default function App() {
   const [trimResult, setTrimResult] = useState<ProcessResult | null>(null);
   const trimVideoRef = useRef<HTMLVideoElement>(null);
 
-  // ── Smoothie state ──
+  // ── Discord state ──
+  const [discordFile, setDiscordFile] = useState("");
+  const [discordProcessing, setDiscordProcessing] = useState(false);
+  const [discordProgress, setDiscordProgress] = useState<number | null>(null);
+  const [discordResult, setDiscordResult] = useState<ProcessResult | null>(null);
+
+  // ── Motion Blur state ──
   const [renderFile, setRenderFile] = useState("");
   const [renderInputFps, setRenderInputFps] = useState<number | null>(null);
   const [renderDetecting, setRenderDetecting] = useState(false);
   const [renderProcessing, setRenderProcessing] = useState(false);
   const [renderProgress, setRenderProgress] = useState<number | null>(null);
   const [renderResult, setRenderResult] = useState<ProcessResult | null>(null);
+  const [motionRuntimeInstalled, setMotionRuntimeInstalled] = useState<boolean | null>(null);
+  const [motionRuntimeInstalling, setMotionRuntimeInstalling] = useState(false);
+  const [motionRuntimeProgress, setMotionRuntimeProgress] = useState<number | null>(null);
 
-  // Persistent Smoothie settings
+  // Persistent Motion Blur settings
   const [renderOutputFps, setRenderOutputFpsState] = useState(() => Number(localStorage.getItem("smth.outFps") ?? "60"));
   // blurAmount: 0.0–1.0 (same as blur/tekno "blur amount"; 1.0 = 360° shutter = full blur)
   const [blurAmount, setBlurAmountState] = useState(() => {
@@ -118,7 +133,7 @@ export default function App() {
   const handleFileRef = useRef<(path: string) => void>(() => { });
 
   useEffect(() => {
-    invoke<FpsConfig[]>("get_fps_configs").then(setFpsConfigs).catch(console.error);
+    getVersion().then(setAppVersion).catch(() => setAppVersion(""));
   }, []);
 
   useEffect(() => {
@@ -157,6 +172,13 @@ export default function App() {
       .then(setFfmpegValid)
       .catch(() => setFfmpegValid(false));
   }, [ffmpegPath]);
+
+  useEffect(() => {
+    if (view !== "render") return;
+    invoke<boolean>("check_motion_runtime")
+      .then(setMotionRuntimeInstalled)
+      .catch(() => setMotionRuntimeInstalled(false));
+  }, [view]);
 
   // ── Trim: markIn / markOut with stable refs ──
   const markInRef = useRef<() => void>(() => { });
@@ -274,58 +296,6 @@ export default function App() {
     } catch (e) { console.error(e); }
   };
 
-  const detectFps = async (path: string) => {
-    if (!ffmpegPath) return;
-    setDetectingFps(true);
-    try {
-      const fps = await invoke<number>("get_video_fps", { ffmpegPath, videoPath: path });
-      setDetectedFps(fps);
-      const match = [60, 120, 240].find(v => Math.abs(v - Math.round(fps)) <= 5) ?? null;
-      setSelectedFps(match);
-    } catch (e) {
-      console.error("FPS detection failed:", e);
-    } finally {
-      setDetectingFps(false);
-    }
-  };
-
-  const handleTiktokFile = async (path: string) => {
-    setInputFile(path);
-    setResult(null);
-    setDetectedFps(null);
-    setSelectedFps(null);
-    await detectFps(path);
-  };
-
-  const pickVideo = async () => {
-    try {
-      const sel = await open({ multiple: false, filters: [{ name: "Video", extensions: VIDEO_EXTS }] });
-      if (typeof sel === "string") await handleTiktokFile(sel);
-    } catch (e) { console.error(e); }
-  };
-
-  const processVideo = async () => {
-    if (!ffmpegPath || !inputFile || selectedFps === null) return;
-    const config = fpsConfigs.find(c => c.fps === selectedFps);
-    if (!config) return;
-    setProcessing(true);
-    setResult(null);
-    try {
-      const res = await invoke<ProcessResult>("process_video", {
-        ffmpegPath, inputPath: inputFile, fps: selectedFps, scale: config.scale,
-      });
-      if (res.success && res.output_path) {
-        setSuccessModal({ message: res.message, outputPath: res.output_path });
-      } else {
-        setResult(res);
-      }
-    } catch (e) {
-      setResult({ success: false, message: `Error: ${e}` });
-    } finally {
-      setProcessing(false);
-    }
-  };
-
   const handleTrimFile = (path: string) => {
     setTrimFile(path);
     setTrimVideoSrc(convertFileSrc(path));
@@ -361,7 +331,7 @@ export default function App() {
     setCleanProcessing(true);
     setCleanResult(null);
     try {
-      const res = await invoke<ProcessResult>("patch_tiktok_clean", { inputPath: cleanFile });
+      const res = await invoke<ProcessResult>("patch_tiktok_optimizer", { inputPath: cleanFile });
       if (res.success && res.output_path) {
         setSuccessModal({ message: res.message, outputPath: res.output_path });
       } else {
@@ -419,6 +389,32 @@ export default function App() {
     } catch (e) { console.error(e); }
   };
 
+  const installMotionRuntime = async () => {
+    setMotionRuntimeInstalling(true);
+    setMotionRuntimeProgress(0);
+    const unlisten = await listen<number>("motion-runtime-progress", (e) => {
+      setMotionRuntimeProgress(e.payload);
+    });
+    try {
+      const res = await invoke<ProcessResult>("install_motion_runtime");
+      if (res.success) {
+        const ok = await invoke<boolean>("check_motion_runtime");
+        setMotionRuntimeInstalled(ok);
+        if (!ok) {
+          setRenderResult({ success: false, message: "Install reported success but runtime files are missing." });
+        }
+      } else {
+        setRenderResult({ success: false, message: res.message });
+      }
+    } catch (e) {
+      setRenderResult({ success: false, message: `Install failed: ${e}` });
+    } finally {
+      unlisten();
+      setMotionRuntimeInstalling(false);
+      setMotionRuntimeProgress(null);
+    }
+  };
+
   const processRender = async () => {
     if (!ffmpegPath || !renderFile || renderInputFps === null) return;
     const workingFps = interpolateOn && interpolateFpsValue > 0 ? interpolateFpsValue : renderInputFps;
@@ -431,7 +427,7 @@ export default function App() {
       setRenderProgress(e.payload);
     });
     try {
-      const res = await invoke<ProcessResult>("render_video", {
+      const res = await invoke<ProcessResult>("render_video_motion_runtime", {
         ffmpegPath,
         inputPath: renderFile,
         interpolateFps: interpolateOn ? interpolateFpsValue : 0,
@@ -456,14 +452,56 @@ export default function App() {
     }
   };
 
+  const handleDiscordFile = (path: string) => {
+    setDiscordFile(path);
+    setDiscordResult(null);
+    setDiscordProgress(null);
+  };
+
+  const pickDiscordVideo = async () => {
+    try {
+      const sel = await open({ multiple: false, filters: [{ name: "Video", extensions: VIDEO_EXTS }] });
+      if (typeof sel === "string") handleDiscordFile(sel);
+    } catch (e) { console.error(e); }
+  };
+
+  const compressForDiscord = async () => {
+    if (!ffmpegPath || !discordFile) return;
+    setDiscordProcessing(true);
+    setDiscordResult(null);
+    setDiscordProgress(0);
+    const unlisten = await listen<number>("discord-progress", (e) => {
+      setDiscordProgress(e.payload);
+    });
+    try {
+      const res = await invoke<ProcessResult>("compress_for_discord", {
+        ffmpegPath,
+        inputPath: discordFile,
+      });
+      if (res.success && res.output_path) {
+        setSuccessModal({ message: res.message, outputPath: res.output_path });
+      } else {
+        setDiscordResult(res);
+      }
+    } catch (e) {
+      setDiscordResult({ success: false, message: `Error: ${e}` });
+    } finally {
+      unlisten();
+      setDiscordProcessing(false);
+      setDiscordProgress(null);
+    }
+  };
+
   if (view === "trim") {
     handleFileRef.current = handleTrimFile;
   } else if (view === "render") {
     handleFileRef.current = handleRenderFile;
-  } else if (view === "tiktok-clean") {
+  } else if (view === "clean") {
     handleFileRef.current = handleCleanFile;
+  } else if (view === "discord") {
+    handleFileRef.current = handleDiscordFile;
   } else {
-    handleFileRef.current = handleTiktokFile;
+    handleFileRef.current = handleDiscordFile;
   }
 
   const [successModal, setSuccessModal] = useState<{ message: string; outputPath: string } | null>(null);
@@ -472,13 +510,13 @@ export default function App() {
     try { await invoke("reveal_in_explorer", { path }); } catch (e) { console.error(e); }
   };
 
-  const canProcess = !!ffmpegValid && !!inputFile && selectedFps !== null && !processing;
   const canExport = !!ffmpegValid && trimSegs.length > 0 && !trimProcessing;
-  const canRender = !!ffmpegValid && !!renderFile && renderInputFps !== null && !renderProcessing;
+  const canRender = !!ffmpegValid && !!renderFile && renderInputFps !== null && !renderProcessing && motionRuntimeInstalled === true;
   const canClean = !!cleanFile && !cleanProcessing;
-  const fileName = inputFile.split(/[\\/]/).pop() ?? "";
+  const canDiscord = !!ffmpegValid && !!discordFile && !discordProcessing;
   const cleanFileName = cleanFile.split(/[\\/]/).pop() ?? "";
   const renderFileName = renderFile.split(/[\\/]/).pop() ?? "";
+  const discordFileName = discordFile.split(/[\\/]/).pop() ?? "";
   const trimTotalLen = trimSegs.reduce((acc, s) => acc + (s.outPoint - s.inPoint), 0);
   const renderWorkingFps = interpolateOn && interpolateFpsValue > 0 ? interpolateFpsValue : (renderInputFps ?? renderOutputFps);
   const renderFramesBlended = Math.max(1, Math.round(renderWorkingFps / renderOutputFps * blurAmount));
@@ -487,32 +525,52 @@ export default function App() {
     <div className="flex h-screen bg-background text-foreground font-sans antialiased select-none overflow-hidden">
 
       {/* ── Sidebar ── */}
-      <aside className="w-52 shrink-0 flex flex-col border-r border-border">
-        <div className="h-12 px-4 flex items-center gap-2.5 border-b border-border">
-          <img src="/logo.png" alt="xype" className="w-5 h-5 rounded-md shrink-0" />
-          <span className="text-sm font-semibold tracking-tight">xype</span>
+      <aside className={cn(
+        "shrink-0 flex flex-col border-r border-border bg-sidebar transition-[width] duration-300 [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]",
+        sidebarCollapsed ? "w-[56px]" : "w-56"
+      )}>
+        <div className={cn("h-14 flex items-center border-b border-border transition-[padding] duration-300 [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]", sidebarCollapsed ? "px-4 justify-center" : "px-3.5 gap-2.5")}>
+          <img src="/logo.png" alt="xype" className="w-6 h-6 shrink-0" />
+          <div className={cn("min-w-0 transition-opacity duration-150", sidebarCollapsed ? "hidden opacity-0" : "block opacity-100")}>
+            <span className="block text-[13px] font-semibold tracking-tight leading-none">xype</span>
+            <span className="block mt-1 text-[11px] text-muted-foreground">video tools</span>
+          </div>
+          {!sidebarCollapsed && (
+            <button type="button" onClick={() => setSidebarCollapsed(true)}
+              className="motion-press ml-auto grid size-7 place-items-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/55"
+              aria-label="Collapse sidebar">
+              <span className="text-base leading-none">‹</span>
+            </button>
+          )}
         </div>
 
-        <nav className="flex-1 p-2 space-y-px">
-          <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/40">Tools</p>
-          <SidebarItem active={view === "tiktok-quality"} onClick={() => setView("tiktok-quality")} icon={<SiTiktok />}>
-            TikTok Quality
+        <nav className="flex-1 p-2 space-y-0.5">
+          {!sidebarCollapsed && <p className="px-2.5 pt-2 pb-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/50">Modules</p>}
+          {sidebarCollapsed && (
+            <button type="button" onClick={() => setSidebarCollapsed(false)}
+              className="motion-press mb-1 grid size-9 place-items-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/55"
+              aria-label="Expand sidebar">
+              <span className="text-base leading-none">›</span>
+            </button>
+          )}
+          <SidebarItem collapsed={sidebarCollapsed} active={view === "discord"} onClick={() => navigate("discord")} icon={<SiDiscord />}>
+            Discord Compress
           </SidebarItem>
-          <SidebarItem active={view === "tiktok-clean"} onClick={() => setView("tiktok-clean")} icon={<PiSparkleDuotone />}>
-            TikTok Clean
+          <SidebarItem collapsed={sidebarCollapsed} active={view === "clean"} onClick={() => navigate("clean")} icon={<PiSparkleDuotone />}>
+            TikTok Optimizer
           </SidebarItem>
-          <SidebarItem active={view === "trim"} onClick={() => setView("trim")} icon={<PiScissorsDuotone />}>
+          <SidebarItem collapsed={sidebarCollapsed} active={view === "trim"} onClick={() => navigate("trim")} icon={<PiScissorsDuotone />}>
             Trim
           </SidebarItem>
-          <SidebarItem active={view === "render"} onClick={() => setView("render")} icon={<PiFilmReelDuotone />}>
-            Smoothie
+          <SidebarItem collapsed={sidebarCollapsed} active={false} disabled tooltip="Motion Blur is unavailable right now" onClick={() => { }} icon={<PiFilmReelDuotone />}>
+            Motion Blur
           </SidebarItem>
         </nav>
 
         <div className="p-2 border-t border-border">
-          <SidebarItem active={view === "settings"} onClick={() => setView("settings")} icon={<PiGearSixDuotone />}>
+          <SidebarItem collapsed={sidebarCollapsed} active={view === "settings"} onClick={() => navigate("settings")} icon={<PiGearSixDuotone />}>
             Settings
-            <span className="ml-auto flex items-center gap-1">
+            <span className={cn("ml-auto flex items-center gap-1", sidebarCollapsed && "hidden")}>
               {updateStatus === "available" && (
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0 anim-scale-in" />
               )}
@@ -525,110 +583,12 @@ export default function App() {
       </aside>
 
       {/* ── Main ── */}
-      <div key={view} className="flex-1 flex flex-col overflow-hidden anim-fade">
+      <div className="flex-1 flex flex-col overflow-hidden">
 
-        {/* ─ TikTok Quality ─ */}
-        {view === "tiktok-quality" && (
+        {/* ─ Clean ─ */}
+        {view === "clean" && (
           <>
-            <Header icon={<SiTiktok />} title="TikTok Quality" sub="FPS Scaler" />
-
-            {/* Empty state — drop zone fills the height */}
-            {!inputFile && (
-              <main className="flex-1 flex flex-col overflow-auto">
-                <div className="flex-1 flex flex-col gap-4 p-8">
-                  {!ffmpegValid && <FfmpegWarning onClick={() => setView("settings")} />}
-                  <DropZone key="empty" isDragOver={isDragOver} onClick={pickVideo}
-                    label="Drop video here" hint="or click to browse · MP4, MOV, MKV, AVI…" />
-                </div>
-              </main>
-            )}
-
-            {/* Loaded state — spacious stacked layout, action at bottom */}
-            {!!inputFile && (
-              <main className="flex-1 overflow-auto">
-                <div key="filled" className="min-h-full flex flex-col p-8 gap-8">
-
-                  {/* File card */}
-                  <div className="anim-slide-up flex items-center gap-4 px-5 py-4 rounded-2xl border border-border bg-accent/10 transition-colors hover:bg-accent/15">
-                    <div className="w-12 h-12 rounded-xl bg-accent flex items-center justify-center shrink-0">
-                      <PiFilmSlateDuotone className="text-xl text-muted-foreground" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[15px] font-semibold truncate">{fileName}</p>
-                      <div className="mt-0.5 text-sm text-muted-foreground h-5 flex items-center">
-                        {detectingFps && (
-                          <span className="anim-fade flex items-center gap-1.5">
-                            <PiSpinnerGapBold className="animate-spin" />Detecting FPS…
-                          </span>
-                        )}
-                        {!detectingFps && detectedFps !== null && (
-                          <span className="anim-fade">
-                            Detected: <span className="text-foreground font-semibold">{Math.round(detectedFps)} fps</span>
-                          </span>
-                        )}
-                        {!detectingFps && detectedFps === null && !ffmpegValid && (
-                          <span className="anim-fade">Configure FFmpeg to detect FPS</span>
-                        )}
-                        {!detectingFps && detectedFps === null && ffmpegValid && (
-                          <span className="anim-fade text-destructive">FPS detection failed</span>
-                        )}
-                      </div>
-                    </div>
-                    <button type="button"
-                      onClick={() => { setInputFile(""); setDetectedFps(null); setSelectedFps(null); setResult(null); }}
-                      className="text-muted-foreground/40 hover:text-muted-foreground shrink-0 transition-all duration-150 hover:scale-110 active:scale-90">
-                      <PiXCircleFill className="text-xl" />
-                    </button>
-                  </div>
-
-                  {/* FPS selector */}
-                  <div className="anim-slide-up space-y-4" style={{ animationDelay: "50ms" }}>
-                    <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-widest">Source FPS</p>
-                    <div className="grid grid-cols-3 gap-3">
-                      {fpsConfigs.map((cfg, i) => (
-                        <button key={cfg.fps} type="button" onClick={() => setSelectedFps(cfg.fps)}
-                          className={cn(
-                            "anim-slide-up h-16 rounded-xl border font-medium flex flex-col items-center justify-center gap-0.5 transition-all duration-200 active:scale-[0.97]",
-                            selectedFps === cfg.fps
-                              ? "bg-foreground text-background border-foreground scale-[1.02]"
-                              : "border-border text-muted-foreground hover:text-foreground hover:bg-accent/40"
-                          )}
-                          style={{ animationDelay: `${80 + i * 35}ms` }}>
-                          <span className="text-2xl font-bold leading-none tabular-nums">{cfg.fps}</span>
-                          <span className="text-[11px] font-normal opacity-50 mt-0.5">fps</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Push action to bottom */}
-                  <div className="flex-1" />
-
-                  {/* Process */}
-                  <div className="anim-fade space-y-4" style={{ animationDelay: "200ms" }}>
-                    <div className="border-t border-border" />
-                    <button type="button" onClick={processVideo} disabled={!canProcess}
-                      className={cn("w-full h-11 rounded-xl text-sm font-semibold transition-all duration-200",
-                        canProcess
-                          ? "bg-foreground text-background hover:bg-foreground/90 active:scale-[0.98] hover:scale-[1.005]"
-                          : "bg-accent/40 text-muted-foreground cursor-not-allowed")}>
-                      {processing
-                        ? <span className="flex items-center justify-center gap-2"><PiSpinnerGapBold className="animate-spin" />Processing…</span>
-                        : "Process Video"}
-                    </button>
-                    {result && <ResultBanner result={result} />}
-                  </div>
-
-                </div>
-              </main>
-            )}
-          </>
-        )}
-
-        {/* ─ TikTok Clean ─ */}
-        {view === "tiktok-clean" && (
-          <>
-            <Header icon={<PiSparkleDuotone />} title="TikTok Clean" sub="Shark Patch" />
+            <Header {...VIEW_META.clean} />
 
             {!cleanFile && (
               <main className="flex-1 flex flex-col overflow-auto">
@@ -644,8 +604,8 @@ export default function App() {
                 <div key="filled" className="min-h-full flex flex-col p-8 gap-8">
 
                   {/* File card */}
-                  <div className="anim-slide-up flex items-center gap-4 px-5 py-4 rounded-2xl border border-border bg-accent/10 transition-colors hover:bg-accent/15">
-                    <div className="w-12 h-12 rounded-xl bg-accent flex items-center justify-center shrink-0">
+                  <div className="anim-slide-up flex items-center gap-3 px-4 py-3 rounded-lg border border-border bg-card/35 transition-colors hover:bg-card/55">
+                    <div className="w-9 h-9 rounded-md bg-accent flex items-center justify-center shrink-0">
                       <PiFilmSlateDuotone className="text-xl text-muted-foreground" />
                     </div>
                     <div className="flex-1 min-w-0">
@@ -660,7 +620,7 @@ export default function App() {
                   </div>
 
                   {/* What this does */}
-                  <div className="anim-slide-up rounded-2xl border border-border bg-accent/5 px-5 py-4 space-y-1.5" style={{ animationDelay: "40ms" }}>
+                  <div className="anim-slide-up rounded-lg border border-border bg-card/25 px-4 py-3 space-y-1.5" style={{ animationDelay: "40ms" }}>
                     <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-widest">What happens</p>
                     <p className="text-[13px] text-muted-foreground leading-relaxed">
                       Writes <span className="font-mono text-foreground/80 text-[12px]">0x00000001</span> into the display matrix{" "}
@@ -697,7 +657,7 @@ export default function App() {
         {/* ─ Trim ─ */}
         {view === "trim" && (
           <>
-            <Header icon={<PiScissorsDuotone />} title="Trim" sub="Lossless Cut" />
+            <Header {...VIEW_META.trim} />
 
             {/* Empty state */}
             {!trimFile && (
@@ -716,7 +676,7 @@ export default function App() {
                 <div key="filled" className="flex-1 flex flex-col gap-4 p-6 min-h-0">
 
                   {/* Video — flex-1 fills remaining vertical space */}
-                  <div className="anim-scale-in flex-1 min-h-[120px] rounded-2xl overflow-hidden bg-black border border-border">
+                  <div className="anim-scale-in flex-1 min-h-[120px] rounded-lg overflow-hidden bg-black border border-border">
                     <video
                       ref={trimVideoRef}
                       src={trimVideoSrc}
@@ -862,7 +822,7 @@ export default function App() {
         {/* ─ Render ─ */}
         {view === "render" && (
           <>
-            <Header icon={<PiFilmReelDuotone />} title="Smoothie" sub="Frame Blending" />
+            <Header {...VIEW_META.render} />
 
             {/* Empty state */}
             {!renderFile && (
@@ -880,9 +840,42 @@ export default function App() {
               <main className="flex-1 overflow-auto">
                 <div key="filled" className="min-h-full flex flex-col p-8 gap-8">
 
+                  {/* Motion runtime install card */}
+                  {motionRuntimeInstalled === false && (
+                    <div className="anim-slide-up rounded-xl border border-border bg-accent/5 px-4 py-4 space-y-3">
+                      <div className="flex items-start gap-2.5">
+                        <PiDownloadSimpleDuotone className="text-emerald-400 text-lg shrink-0 mt-0.5" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[13px] font-semibold text-foreground">Motion engine not installed</p>
+                          <p className="text-[12px] text-muted-foreground/60 mt-0.5 leading-relaxed">
+                            The high-quality motion blur engine uses VapourSynth plugins (~40 MB). Click below to install automatically.
+                          </p>
+                        </div>
+                      </div>
+                      {motionRuntimeInstalling ? (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[13px] text-muted-foreground">Downloading motion engine…</span>
+                            <span className="text-[12px] font-mono text-muted-foreground/50 tabular-nums">{motionRuntimeProgress ?? 0}%</span>
+                          </div>
+                          <div className="h-1.5 w-full rounded-full bg-accent/40 overflow-hidden">
+                            <div className="h-full bg-emerald-500 rounded-full transition-[width] duration-300 ease-out"
+                              style={{ width: `${motionRuntimeProgress ?? 0}%` }} />
+                          </div>
+                        </div>
+                      ) : (
+                        <button type="button" onClick={installMotionRuntime}
+                          className="motion-press w-full h-9 rounded-lg bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 text-[13px] font-medium hover:bg-emerald-500/25 flex items-center justify-center gap-2">
+                          <PiDownloadSimpleDuotone className="text-base" />
+                          Install motion engine
+                        </button>
+                      )}
+                    </div>
+                  )}
+
                   {/* File card */}
-                  <div className="anim-slide-up flex items-center gap-4 px-5 py-4 rounded-2xl border border-border bg-accent/10 transition-colors hover:bg-accent/15">
-                    <div className="w-12 h-12 rounded-xl bg-accent flex items-center justify-center shrink-0">
+                  <div className="anim-slide-up flex items-center gap-3 px-4 py-3 rounded-lg border border-border bg-card/35 transition-colors hover:bg-card/55">
+                    <div className="w-9 h-9 rounded-md bg-accent flex items-center justify-center shrink-0">
                       <PiFilmSlateDuotone className="text-xl text-muted-foreground" />
                     </div>
                     <div className="flex-1 min-w-0">
@@ -1145,7 +1138,7 @@ export default function App() {
                     {renderProcessing ? (
                       <div className="space-y-3">
                         {renderFile && (
-                          <div className="rounded-xl overflow-hidden border border-border bg-black/50">
+                          <div className="rounded-lg overflow-hidden border border-border bg-black/50">
                             <video
                               src={convertFileSrc(renderFile)}
                               controls
@@ -1186,42 +1179,125 @@ export default function App() {
           </>
         )}
 
+        {/* ─ Discord ─ */}
+        {view === "discord" && (
+          <>
+            <Header {...VIEW_META.discord} />
+
+            {!discordFile && (
+              <main className="flex-1 flex flex-col overflow-auto">
+                <div className="flex-1 flex flex-col gap-4 p-8">
+                  {!ffmpegValid && <FfmpegWarning onClick={() => setView("settings")} />}
+                  <DropZone key="empty" isDragOver={isDragOver} onClick={pickDiscordVideo}
+                    label="Drop video here" hint="or click to browse · MP4, MOV, MKV, AVI…" />
+                </div>
+              </main>
+            )}
+
+            {!!discordFile && (
+              <main className="flex-1 overflow-auto">
+                <div key="filled" className="min-h-full flex flex-col p-8 gap-8">
+
+                  {/* File card */}
+                  <div className="anim-slide-up flex items-center gap-3 px-4 py-3 rounded-lg border border-border bg-card/35 transition-colors hover:bg-card/55">
+                    <div className="w-9 h-9 rounded-md bg-accent flex items-center justify-center shrink-0">
+                      <PiFilmSlateDuotone className="text-xl text-muted-foreground" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[15px] font-semibold truncate">{discordFileName}</p>
+                      <p className="mt-0.5 text-sm text-muted-foreground">Ready to compress</p>
+                    </div>
+                    <button type="button"
+                      onClick={() => { setDiscordFile(""); setDiscordResult(null); setDiscordProgress(null); }}
+                      className="text-muted-foreground/40 hover:text-muted-foreground shrink-0 transition-all duration-150 hover:scale-110 active:scale-90">
+                      <PiXCircleFill className="text-xl" />
+                    </button>
+                  </div>
+
+                  {/* Info card */}
+                  <div className="anim-slide-up rounded-lg border border-border bg-card/25 px-4 py-3 space-y-1.5" style={{ animationDelay: "40ms" }}>
+                    <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-widest">What happens</p>
+                    <p className="text-[13px] text-muted-foreground leading-relaxed">
+                      Calculates the exact bitrate needed to fit the video under{" "}
+                      <span className="font-semibold text-foreground">8 MB</span>, then re-encodes with{" "}
+                      <span className="font-mono text-foreground/80 text-[12px]">libx264</span> using a fast preset.
+                      Resolution is scaled down automatically if the bitrate gets too low.
+                    </p>
+                  </div>
+
+                  <div className="flex-1" />
+
+                  {/* Compress */}
+                  <div className="anim-fade space-y-4" style={{ animationDelay: "100ms" }}>
+                    <div className="border-t border-border" />
+                    {discordProcessing ? (
+                      <div className="space-y-3">
+                        <div className="h-1.5 w-full rounded-full bg-accent/40 overflow-hidden">
+                          <div
+                            className="h-full bg-foreground rounded-full transition-[width] duration-300 ease-out"
+                            style={{ width: `${Math.round((discordProgress ?? 0) * 100)}%` }}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between text-[12px] text-muted-foreground tabular-nums">
+                          <span>{Math.round((discordProgress ?? 0) * 100)}%</span>
+                          <span className="text-[11px] opacity-60">libx264 · veryfast</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <button type="button" onClick={compressForDiscord} disabled={!canDiscord}
+                        className={cn("w-full h-11 rounded-xl text-sm font-semibold transition-all duration-200",
+                          canDiscord
+                            ? "bg-foreground text-background hover:bg-foreground/90 active:scale-[0.98] hover:scale-[1.005]"
+                            : "bg-accent/40 text-muted-foreground cursor-not-allowed")}>
+                        Compress for Discord
+                      </button>
+                    )}
+                    {discordResult && <ResultBanner result={discordResult} />}
+                  </div>
+
+                </div>
+              </main>
+            )}
+          </>
+        )}
+
         {/* ─ Settings ─ */}
         {view === "settings" && (
           <>
-            <Header icon={<PiGearSixDuotone />} title="Settings" />
+            <Header {...VIEW_META.settings} />
             <main className="flex-1 overflow-auto">
-              <div className="min-h-full flex flex-col p-8 gap-8">
+              <div className="mx-auto grid w-full max-w-5xl grid-cols-[minmax(0,1fr)_280px] gap-5 p-6">
 
-                {/* FFmpeg */}
-                <div className="anim-slide-up">
-                  <p className="text-[13px] font-semibold mb-1">FFmpeg Executable</p>
-                  <p className="text-[13px] text-muted-foreground mb-4">Required for all video processing and FPS detection.</p>
-                  <div className="flex gap-2 items-center">
-                    <input type="text" value={ffmpegPath} onChange={e => saveFfmpegPath(e.target.value)}
-                      placeholder="C:\path\to\ffmpeg.exe" spellCheck={false}
-                      className={cn("flex-1 h-9 px-3 font-mono text-[13px] bg-transparent border rounded-lg outline-none placeholder:text-muted-foreground/30 transition-colors duration-150 focus:border-ring",
-                        ffmpegValid === false ? "border-destructive/50" : "border-border")} />
-                    <button type="button" onClick={pickFfmpeg}
-                      className="h-9 px-3 text-sm border border-border rounded-lg shrink-0 text-muted-foreground hover:text-foreground hover:bg-accent/40 flex items-center gap-1.5 transition-all duration-150 active:scale-[0.97]">
-                      <PiFolderOpenDuotone className="text-base" />Browse
-                    </button>
-                    {ffmpegValid === true && <PiCheckCircleFill className="anim-pop text-emerald-500 text-xl shrink-0" />}
-                    {ffmpegValid === false && <PiXCircleFill className="anim-scale-in text-destructive text-xl shrink-0" />}
+                <section className="anim-slide-up rounded-lg border border-border bg-card/30">
+                  <div className="border-b border-border px-4 py-3">
+                    <p className="text-[13px] font-medium">FFmpeg executable</p>
+                    <p className="mt-1 text-[12px] text-muted-foreground">Used for compression, trimming, rendering, and metadata reads.</p>
                   </div>
-                  {ffmpegValid === false && (
-                    <p className="anim-slide-down text-[12px] text-destructive mt-2">Not a valid ffmpeg executable.</p>
-                  )}
-                </div>
+                  <div className="p-4">
+                    <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
+                      <input type="text" value={ffmpegPath} onChange={e => saveFfmpegPath(e.target.value)}
+                        placeholder="C:\path\to\ffmpeg.exe" spellCheck={false}
+                        className={cn("h-9 min-w-0 rounded-md border bg-background/40 px-3 font-mono text-[12px] outline-none placeholder:text-muted-foreground/30 transition-colors duration-150 focus:border-ring",
+                          ffmpegValid === false ? "border-destructive/50" : "border-border")} />
+                      <button type="button" onClick={pickFfmpeg}
+                        className="motion-press h-9 px-3 text-[13px] border border-border rounded-md shrink-0 text-muted-foreground hover:text-foreground hover:bg-accent/50 flex items-center gap-1.5">
+                        <PiFolderOpenDuotone className="text-base" />Browse
+                      </button>
+                      <span className="grid size-9 place-items-center">
+                        {ffmpegValid === true && <PiCheckCircleFill className="anim-pop text-emerald-500 text-lg shrink-0" />}
+                        {ffmpegValid === false && <PiXCircleFill className="anim-scale-in text-destructive text-lg shrink-0" />}
+                      </span>
+                    </div>
+                    {ffmpegValid === false && (
+                      <p className="anim-slide-down text-[12px] text-destructive mt-2">Not a valid ffmpeg executable.</p>
+                    )}
+                  </div>
+                </section>
 
-                {/* Divider */}
-                <div className="border-t border-border" />
-
-                {/* Updates */}
-                <div className="anim-slide-up space-y-4" style={{ animationDelay: "40ms" }}>
+                <section className="anim-slide-up rounded-lg border border-border bg-card/30 space-y-4 p-4" style={{ animationDelay: "30ms" }}>
                   <div className="flex items-center justify-between">
-                    <p className="text-[13px] font-semibold">Updates</p>
-                    <span className="text-[11px] text-muted-foreground/40 font-mono">v0.1.0</span>
+                    <p className="text-[13px] font-medium">Updates</p>
+                    <span className="text-[11px] text-muted-foreground/50 font-mono">{appVersion ? `v${appVersion}` : ""}</span>
                   </div>
 
                   {/* Status card */}
@@ -1251,7 +1327,7 @@ export default function App() {
                         </div>
                       </div>
                       <button type="button" onClick={doInstallUpdate}
-                        className="w-full h-9 rounded-lg bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 text-[13px] font-medium hover:bg-emerald-500/25 transition-all duration-150 active:scale-[0.98]">
+                        className="motion-press w-full h-9 rounded-lg bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 text-[13px] font-medium hover:bg-emerald-500/25">
                         Download &amp; Install
                       </button>
                     </div>
@@ -1279,7 +1355,7 @@ export default function App() {
                         <p className="text-[13px] text-emerald-400 font-medium">Update installed. Restart to apply.</p>
                       </div>
                       <button type="button" onClick={() => relaunch()}
-                        className="w-full h-9 rounded-lg bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 text-[13px] font-medium hover:bg-emerald-500/25 flex items-center justify-center gap-2 transition-all duration-150 active:scale-[0.98]">
+                        className="motion-press w-full h-9 rounded-lg bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 text-[13px] font-medium hover:bg-emerald-500/25 flex items-center justify-center gap-2">
                         <PiArrowCounterClockwiseDuotone className="text-base" />
                         Restart now
                       </button>
@@ -1292,15 +1368,14 @@ export default function App() {
                     </div>
                   )}
 
-                  {/* Manual check button — shown when not actively busy */}
                   {(updateStatus === "idle" || updateStatus === "uptodate" || updateStatus === "error") && (
                     <button type="button" onClick={doCheckUpdate}
-                      className="h-9 px-4 text-[13px] border border-border rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/40 flex items-center gap-1.5 transition-all duration-150 active:scale-[0.97]">
+                      className="motion-press h-9 px-4 text-[13px] border border-border rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/40 flex items-center gap-1.5">
                       <PiArrowsClockwiseDuotone className="text-base" />
                       Check for updates
                     </button>
                   )}
-                </div>
+                </section>
 
               </div>
             </main>
@@ -1325,11 +1400,13 @@ export default function App() {
 function FfmpegWarning({ onClick }: { onClick: () => void }) {
   return (
     <button type="button" onClick={onClick}
-      className="anim-slide-down shrink-0 w-full flex items-center gap-2.5 px-4 py-3 rounded-xl border border-border text-left group transition-all duration-150 hover:bg-accent/30 active:scale-[0.99]">
-      <PiWarningCircleDuotone className="text-base text-muted-foreground shrink-0" />
+      className="motion-press anim-slide-down shrink-0 w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg border border-border bg-accent/30 text-left group hover:bg-accent/45">
+      <span className="text-muted-foreground">
+        <PiWarningCircleDuotone className="text-base shrink-0" />
+      </span>
       <span className="text-[13px] text-muted-foreground">
         FFmpeg not configured —{" "}
-        <span className="text-foreground group-hover:underline underline-offset-2">open Settings</span>
+        <span className="text-foreground font-medium group-hover:underline underline-offset-4">open Settings</span>
       </span>
     </button>
   );
@@ -1338,7 +1415,7 @@ function FfmpegWarning({ onClick }: { onClick: () => void }) {
 // ── Result banner ──
 function ResultBanner({ result }: { result: ProcessResult }) {
   return (
-    <div className={cn("anim-slide-up rounded-xl border px-4 py-3 text-[13px]",
+    <div className={cn("anim-slide-up rounded-lg border px-3 py-2.5 text-[13px]",
       result.success
         ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-400"
         : "border-destructive/20 bg-destructive/5 text-destructive")}>
@@ -1361,15 +1438,15 @@ function ExportSuccessModal({ data, onClose, onReveal }: {
   const videoSrc = isVideo ? convertFileSrc(data.outputPath) : null;
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[3px] anim-fade"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 anim-fade"
       onClick={onClose}
     >
       <div
-        className="anim-scale-in bg-card border border-border rounded-2xl p-6 w-[420px] shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto"
+        className="anim-scale-in bg-card border border-border rounded-xl p-5 w-[420px] shadow-lg space-y-4 max-h-[90vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-start gap-3.5">
-          <div className="w-9 h-9 rounded-xl bg-emerald-500/15 flex items-center justify-center shrink-0">
+          <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center shrink-0">
             <PiCheckCircleFill className="text-emerald-400 text-lg" />
           </div>
           <div className="flex-1 min-w-0 pt-0.5">
@@ -1381,7 +1458,7 @@ function ExportSuccessModal({ data, onClose, onReveal }: {
         </div>
 
         {videoSrc && (
-          <div className="rounded-xl overflow-hidden border border-border bg-black/50">
+          <div className="rounded-lg overflow-hidden border border-border bg-black/50">
             <video
               src={videoSrc}
               controls
@@ -1395,14 +1472,14 @@ function ExportSuccessModal({ data, onClose, onReveal }: {
           <button
             type="button"
             onClick={onReveal}
-            className="flex-1 h-9 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-all duration-150 active:scale-[0.98]"
+            className="motion-press flex-1 h-9 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-accent/50"
           >
             Open Location
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 h-9 rounded-lg bg-foreground text-background text-sm font-semibold hover:bg-foreground/90 transition-all duration-150 active:scale-[0.98]"
+            className="motion-press flex-1 h-9 rounded-lg bg-foreground text-background text-sm font-medium hover:bg-foreground/90"
           >
             OK
           </button>
@@ -1418,22 +1495,21 @@ function DropZone({ isDragOver, onClick, label, hint }: {
 }) {
   return (
     <div onClick={onClick} className={cn(
-      "anim-scale-in flex-1 w-full rounded-2xl border-2 border-dashed cursor-pointer min-h-[200px]",
-      "flex flex-col items-center justify-center gap-5 transition-all duration-200",
+      "motion-lift anim-scale-in group relative flex-1 w-full rounded-xl border border-dashed cursor-pointer min-h-[220px] overflow-hidden",
+      "flex flex-col items-center justify-center gap-4",
       isDragOver
-        ? "border-foreground/25 bg-accent/25 scale-[1.015] shadow-[0_0_40px_rgba(255,255,255,0.04)]"
-        : "border-border hover:border-border/70 hover:bg-accent/10 hover:scale-[1.005]"
+        ? "border-foreground/30 bg-accent/50"
+        : "border-border bg-card/25 hover:bg-card/45 hover:border-border/80"
     )}>
       <div className={cn(
-        "w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-200",
-        isDragOver ? "bg-accent scale-110" : "bg-accent/50"
+        "relative w-11 h-11 rounded-lg flex items-center justify-center motion-smooth transition-colors",
+        isDragOver ? "bg-accent text-foreground" : "bg-accent/50 text-muted-foreground group-hover:text-foreground"
       )}>
-        <PiFilmSlateDuotone className={cn("text-2xl transition-colors duration-200",
-          isDragOver ? "text-foreground/70" : "text-muted-foreground")} />
+        <PiFilmSlateDuotone className="text-xl transition-colors duration-150" />
       </div>
-      <div className="text-center space-y-1.5">
-        <p className="text-base font-medium">{isDragOver ? "Release to load" : label}</p>
-        <p className="text-sm text-muted-foreground">{hint}</p>
+      <div className="relative text-center space-y-1">
+        <p className="text-[15px] font-medium tracking-tight">{isDragOver ? "Release to load" : label}</p>
+        <p className="text-sm text-muted-foreground max-w-[34ch] leading-relaxed">{hint}</p>
       </div>
     </div>
   );
@@ -1521,12 +1597,12 @@ function Timeline({ duration, currentTime, segments, pendingIn, videoRef }: {
 
 function Header({ icon, title, sub }: { icon: React.ReactNode; title: string; sub?: string }) {
   return (
-    <header className="h-12 px-6 flex items-center gap-2 border-b border-border shrink-0">
-      <span className="text-muted-foreground text-sm">{icon}</span>
-      <span className="text-sm font-medium">{title}</span>
+    <header className="h-14 px-5 flex items-center gap-2.5 border-b border-border shrink-0 bg-background">
+      <span className="text-muted-foreground text-base">{icon}</span>
+      <span className="text-[13px] font-medium tracking-tight">{title}</span>
       {sub && (
         <>
-          <span className="text-muted-foreground/30 text-sm">/</span>
+          <span className="text-muted-foreground/25 text-sm">/</span>
           <span className="text-sm text-muted-foreground">{sub}</span>
         </>
       )}
@@ -1534,15 +1610,32 @@ function Header({ icon, title, sub }: { icon: React.ReactNode; title: string; su
   );
 }
 
-function SidebarItem({ active, onClick, icon, children }: {
-  active: boolean; onClick: () => void; icon: React.ReactNode; children: React.ReactNode;
+function SidebarItem({ active, collapsed = false, disabled = false, tooltip, onClick, icon, children }: {
+  active: boolean; collapsed?: boolean; disabled?: boolean; tooltip?: string; onClick: () => void; icon: React.ReactNode; children: React.ReactNode;
 }) {
   return (
-    <button type="button" onClick={onClick}
-      className={cn("w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all duration-150 active:scale-[0.98]",
-        active ? "bg-accent text-accent-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-accent/40")}>
-      <span className={cn("text-base shrink-0 transition-transform duration-200", active ? "scale-110" : "")}>{icon}</span>
-      {children}
+    <button type="button" onClick={disabled ? undefined : onClick} aria-disabled={disabled}
+      title={tooltip ?? (collapsed && typeof children === "string" ? children : undefined)}
+      className={cn(
+        "group relative w-full overflow-hidden rounded-md text-[13px] outline-none transition-colors duration-150",
+        collapsed ? "h-9 px-0" : "h-8 px-2.5",
+        disabled ? "cursor-not-allowed text-muted-foreground/35" : active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+      )}>
+      <span className={cn(
+        "absolute inset-0 rounded-md transition-opacity duration-150",
+        disabled ? "bg-accent opacity-0" : active ? "bg-accent opacity-100" : "bg-accent opacity-0 group-hover:opacity-55"
+      )} />
+      <span className={cn(
+        "absolute left-0.5 top-1/2 h-4 w-px -translate-y-1/2 rounded-full bg-foreground transition-opacity duration-150",
+        active ? "opacity-70" : "opacity-0"
+      )} />
+      <span className={cn("relative flex h-full items-center", collapsed ? "justify-center" : "gap-2.5")}>
+        <span className={cn(
+          "grid size-5 place-items-center text-base shrink-0 transition-colors duration-150",
+          disabled ? "text-muted-foreground/35" : active ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"
+        )}>{icon}</span>
+        {!collapsed && <span className="truncate">{children}</span>}
+      </span>
     </button>
   );
 }
