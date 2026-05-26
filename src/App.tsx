@@ -101,6 +101,8 @@ export default function App() {
   const [motionRuntimeInstalled, setMotionRuntimeInstalled] = useState<boolean | null>(null);
   const [motionRuntimeInstalling, setMotionRuntimeInstalling] = useState(false);
   const [motionRuntimeProgress, setMotionRuntimeProgress] = useState<number | null>(null);
+  const [smoothieRecipeText, setSmoothieRecipeText] = useState(() => localStorage.getItem("smth.recipeText") ?? "");
+  const [smoothieRecipeName, setSmoothieRecipeName] = useState(() => localStorage.getItem("smth.recipeName") ?? "");
 
   // Persistent Motion Blur settings
   const [renderOutputFps, setRenderOutputFpsState] = useState(() => Number(localStorage.getItem("smth.outFps") ?? "60"));
@@ -389,6 +391,22 @@ export default function App() {
     } catch (e) { console.error(e); }
   };
 
+  const importSmoothieRecipe = async () => {
+    try {
+      const sel = await open({ multiple: false, filters: [{ name: "Smoothie recipe", extensions: ["ini"] }] });
+      if (typeof sel !== "string") return;
+      const text = await invoke<string>("read_smoothie_recipe", { path: sel });
+      const name = sel.split(/[\\/]/).pop() ?? "recipe.ini";
+      setSmoothieRecipeText(text);
+      setSmoothieRecipeName(name);
+      localStorage.setItem("smth.recipeText", text);
+      localStorage.setItem("smth.recipeName", name);
+      setRenderResult(null);
+    } catch (e) {
+      setRenderResult({ success: false, message: `Recipe import failed: ${e}` });
+    }
+  };
+
   const installMotionRuntime = async () => {
     setMotionRuntimeInstalling(true);
     setMotionRuntimeProgress(0);
@@ -437,6 +455,7 @@ export default function App() {
         encoder: renderEncoder,
         crf: renderCrf,
         timescale: renderTimescale,
+        smoothieRecipe: smoothieRecipeText || null,
       });
       if (res.success && res.output_path) {
         setSuccessModal({ message: res.message, outputPath: res.output_path });
@@ -562,7 +581,7 @@ export default function App() {
           <SidebarItem collapsed={sidebarCollapsed} active={view === "trim"} onClick={() => navigate("trim")} icon={<PiScissorsDuotone />}>
             Trim
           </SidebarItem>
-          <SidebarItem collapsed={sidebarCollapsed} active={false} disabled tooltip="Motion Blur is unavailable right now" onClick={() => { }} icon={<PiFilmReelDuotone />}>
+          <SidebarItem collapsed={sidebarCollapsed} active={view === "render"} onClick={() => navigate("render")} icon={<PiFilmReelDuotone />}>
             Motion Blur
           </SidebarItem>
         </nav>
@@ -942,6 +961,29 @@ export default function App() {
                     </div>
                   </div>
 
+                  <div className="anim-slide-up rounded-lg border border-border bg-card/25 px-4 py-3 space-y-3" style={{ animationDelay: "55ms" }}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-widest">Smoothie Recipe</p>
+                        <p className="mt-1 text-[12px] text-muted-foreground/50">
+                          {smoothieRecipeName ? `Using ${smoothieRecipeName}` : "Optional: import recipe.ini from Smoothie for matching settings."}
+                        </p>
+                      </div>
+                      <div className="flex gap-2 shrink-0">
+                        {smoothieRecipeText && (
+                          <button type="button" onClick={() => { setSmoothieRecipeText(""); setSmoothieRecipeName(""); localStorage.removeItem("smth.recipeText"); localStorage.removeItem("smth.recipeName"); }}
+                            className="h-8 px-3 rounded-lg border border-border text-[12px] text-muted-foreground hover:text-foreground hover:bg-accent/40">
+                            Clear
+                          </button>
+                        )}
+                        <button type="button" onClick={importSmoothieRecipe}
+                          className="h-8 px-3 rounded-lg border border-border text-[12px] font-medium text-muted-foreground hover:text-foreground hover:bg-accent/40">
+                          Import .ini
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* ── Output FPS ── */}
                   <div className="anim-slide-up space-y-3" style={{ animationDelay: "70ms" }}>
                     <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-widest">Output FPS</p>
@@ -1137,19 +1179,6 @@ export default function App() {
                     <div className="border-t border-border" />
                     {renderProcessing ? (
                       <div className="space-y-3">
-                        {renderFile && (
-                          <div className="rounded-lg overflow-hidden border border-border bg-black/50">
-                            <video
-                              src={convertFileSrc(renderFile)}
-                              controls
-                              muted
-                              autoPlay
-                              loop
-                              className="w-full max-h-[180px]"
-                              preload="metadata"
-                            />
-                          </div>
-                        )}
                         <div className="h-1.5 w-full rounded-full bg-accent/40 overflow-hidden">
                           <div
                             className="h-full bg-foreground rounded-full transition-[width] duration-300 ease-out"

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::fs;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tauri::{Emitter, Manager};
 
 #[cfg(windows)]
@@ -22,6 +23,44 @@ fn hidden_cmd(path: &PathBuf) -> Command {
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
     cmd
+}
+
+#[tauri::command]
+fn read_smoothie_recipe(path: String) -> Result<String, String> {
+    let path = PathBuf::from(path);
+    if !path.exists() {
+        return Err("Recipe file not found".to_string());
+    }
+    if path.extension().and_then(|s| s.to_str()).map(|s| !s.eq_ignore_ascii_case("ini")).unwrap_or(true) {
+        return Err("Only Smoothie .ini recipes are supported".to_string());
+    }
+    fs::read_to_string(path).map_err(|e| e.to_string())
+}
+
+fn merge_smoothie_recipe_ini(base: &mut Value, ini: &str) {
+    let Some(data) = base.get_mut("data").and_then(|v| v.as_object_mut()) else {
+        return;
+    };
+
+    let mut section = String::new();
+    for raw_line in ini.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            section = line[1..line.len() - 1].trim().to_lowercase();
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim().to_lowercase();
+        let value = value.trim().trim_matches('"').to_string();
+        if let Some(target) = data.get_mut(&section).and_then(|v| v.as_object_mut()) {
+            target.insert(key, Value::String(value));
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -486,6 +525,7 @@ async fn render_video_motion_runtime(
     encoder: String,
     crf: u32,
     timescale: f64,
+    smoothie_recipe: Option<String>,
 ) -> Result<ProcessResult, String> {
     let input = PathBuf::from(&input_path);
     let ffmpeg = PathBuf::from(&ffmpeg_path);
@@ -533,7 +573,7 @@ async fn render_video_motion_runtime(
     let flowblur_enabled = frames_to_blend > 1;
     let working_fps = interpolate_fps.max(output_fps).max(1);
     let blur_intensity = ((frames_to_blend as f64 * output_fps as f64) / working_fps as f64).clamp(0.1, 4.0);
-    let recipe = serde_json::json!({
+    let mut recipe_value = serde_json::json!({
         "data": {
             "interpolation": {
                 "enabled": if interpolation_enabled { "yes" } else { "no" },
@@ -564,7 +604,11 @@ async fn render_video_motion_runtime(
                 "out": effective_timescale.to_string()
             }
         }
-    }).to_string();
+    });
+    if let Some(recipe_text) = smoothie_recipe.as_deref().filter(|s| !s.trim().is_empty()) {
+        merge_smoothie_recipe_ini(&mut recipe_value, recipe_text);
+    }
+    let recipe = recipe_value.to_string();
 
     let mut path_env = runtime.to_string_lossy().to_string();
     if let Ok(existing) = std::env::var("PATH") {
@@ -1074,6 +1118,7 @@ pub fn run() {
             get_video_fps,
             export_segments,
             render_video,
+            read_smoothie_recipe,
             render_video_motion_runtime,
             check_motion_runtime,
             install_motion_runtime,
