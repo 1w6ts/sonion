@@ -1511,7 +1511,7 @@ export default function App() {
               )}
             </div>
             <div className="flex gap-3 justify-center">
-              <button type="button" onClick={() => openUrl("http://localhost:3000/login")}
+              <button type="button" onClick={() => openUrl("https://xype.gg/login")}
                 className="motion-press h-9 px-4 text-[13px] rounded-lg bg-foreground text-background hover:bg-foreground/90"
               >
                 Log in
