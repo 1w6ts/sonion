@@ -588,53 +588,100 @@ export default function App() {
   const renderFramesBlended = Math.max(1, Math.round(renderWorkingFps / renderOutputFps * blurAmount));
 
   return (
-    <div className="flex h-screen bg-background text-foreground font-sans antialiased select-none overflow-hidden">
+    <div className="flex h-screen overflow-hidden bg-black text-white antialiased">
+      {/* background */}
+      <div className="pointer-events-none fixed inset-0">
+        <div
+          className="absolute inset-0 opacity-[0.025]"
+          style={{
+            backgroundImage:
+              'linear-gradient(rgba(255,255,255,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.08) 1px, transparent 1px)',
+            backgroundSize: '44px 44px',
+          }}
+        />
 
-      {/* ── Sidebar ── */}
-      <aside className={cn(
-        "shrink-0 flex flex-col border-r border-border bg-sidebar transition-[width] duration-300 [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]",
-        sidebarCollapsed ? "w-[56px]" : "w-56"
-      )}>
-        <div className={cn("h-14 flex items-center border-b border-border transition-[padding] duration-300 [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]", sidebarCollapsed ? "px-4 justify-center" : "px-3.5 gap-2.5")}>
-          <img src="/logo.png" alt="xype" className="w-6 h-6 shrink-0" />
-          <div className={cn("min-w-0 transition-opacity duration-150", sidebarCollapsed ? "hidden opacity-0" : "block opacity-100")}>
-            <span className="block text-[13px] font-semibold tracking-tight leading-none">xype</span>
-            <span className="block mt-1 text-[11px] text-muted-foreground">video tools</span>
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_40%)]" />
+      </div>
+
+      {/* sidebar */}
+      <aside
+        className={cn(
+          'relative z-10 flex shrink-0 flex-col border-r border-white/[0.06] bg-white/[0.02] backdrop-blur-2xl transition-all duration-300',
+          sidebarCollapsed ? 'w-[74px]' : 'w-[248px]'
+        )}
+      >
+        {/* logo */}
+        <div className="flex h-16 items-center px-4">
+          <div className="flex items-center gap-3">
+            <img
+              src="/logo.png"
+              alt="xype"
+              className="h-7 w-7 opacity-90"
+            />
+
+            {!sidebarCollapsed && (
+              <div>
+                <p className="text-[14px] font-medium tracking-[-0.02em] text-white">
+                  xype
+                </p>
+
+                <p className="mt-0.5 text-[11px] text-white/30">
+                  video toolkit
+                </p>
+              </div>
+            )}
           </div>
-          {!sidebarCollapsed && (
-            <button type="button" onClick={() => setSidebarCollapsed(true)}
-              className="motion-press ml-auto grid size-7 place-items-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/55"
-              aria-label="Collapse sidebar">
-              <span className="text-base leading-none">‹</span>
-            </button>
-          )}
         </div>
 
-        <nav className="flex-1 p-2 space-y-0.5">
-          {!sidebarCollapsed && <p className="px-2.5 pt-2 pb-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/50">Modules</p>}
-          {sidebarCollapsed && (
-            <button type="button" onClick={() => setSidebarCollapsed(false)}
-              className="motion-press mb-1 grid size-9 place-items-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/55"
-              aria-label="Expand sidebar">
-              <span className="text-base leading-none">›</span>
-            </button>
-          )}
-          <SidebarItem collapsed={sidebarCollapsed} active={view === "discord"} onClick={() => navigate("discord")} icon={<SiDiscord />}>
-            Discord Compress
-          </SidebarItem>
-          <SidebarItem collapsed={sidebarCollapsed} active={view === "clean"} onClick={() => navigate("clean")} icon={<PiSparkleDuotone />}>
-            TikTok Optimizer
-          </SidebarItem>
-          <SidebarItem collapsed={sidebarCollapsed} active={view === "trim"} onClick={() => navigate("trim")} icon={<PiScissorsDuotone />}>
-            Trim
-          </SidebarItem>
-          <SidebarItem collapsed={sidebarCollapsed} active={view === "render"} onClick={() => navigate("render")} icon={<PiFilmReelDuotone />}>
-            Motion Blur
-          </SidebarItem>
+        {/* nav */}
+        <nav className="flex-1 px-3 pb-3">
+          <div className="space-y-1">
+            <SidebarItem
+              collapsed={sidebarCollapsed}
+              active={view === 'discord'}
+              onClick={() => navigate('discord')}
+              icon={<SiDiscord />}
+            >
+              Discord Compress
+            </SidebarItem>
+
+            <SidebarItem
+              collapsed={sidebarCollapsed}
+              active={view === 'clean'}
+              onClick={() => navigate('clean')}
+              icon={<PiSparkleDuotone />}
+            >
+              TikTok Optimizer
+            </SidebarItem>
+
+            <SidebarItem
+              collapsed={sidebarCollapsed}
+              active={view === 'trim'}
+              onClick={() => navigate('trim')}
+              icon={<PiScissorsDuotone />}
+            >
+              Lossless Trim
+            </SidebarItem>
+
+            <SidebarItem
+              collapsed={sidebarCollapsed}
+              active={view === 'render'}
+              onClick={() => navigate('render')}
+              icon={<PiFilmReelDuotone />}
+            >
+              Motion Blur
+            </SidebarItem>
+          </div>
         </nav>
 
-        <div className="p-2 border-t border-border">
-          <SidebarItem collapsed={sidebarCollapsed} active={view === "settings"} onClick={() => navigate("settings")} icon={<PiGearSixDuotone />}>
+        {/* bottom */}
+        <div className="border-t border-white/[0.06] p-3">
+          <SidebarItem
+            collapsed={sidebarCollapsed}
+            active={view === 'settings'}
+            onClick={() => navigate('settings')}
+            icon={<PiGearSixDuotone />}
+          >
             Settings
             <span className={cn("ml-auto flex items-center gap-1", sidebarCollapsed && "hidden")}>
               {updateStatus === "available" && (
@@ -648,8 +695,8 @@ export default function App() {
         </div>
       </aside>
 
-      {/* ── Main ── */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      {/* main */}
+      <div className="relative z-10 flex flex-1 flex-col overflow-hidden">
 
         {/* ─ Clean ─ */}
         {view === "clean" && (
@@ -670,43 +717,52 @@ export default function App() {
                 <div key="filled" className="min-h-full flex flex-col p-8 gap-8">
 
                   {/* File card */}
-                  <div className="anim-slide-up flex items-center gap-3 px-4 py-3 rounded-lg border border-border bg-card/35 transition-colors hover:bg-card/55">
-                    <div className="w-9 h-9 rounded-md bg-accent flex items-center justify-center shrink-0">
-                      <PiFilmSlateDuotone className="text-xl text-muted-foreground" />
+                  <div className="anim-slide-up flex items-center gap-4 rounded-[24px] border border-white/[0.06] bg-white/[0.025] p-4">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/[0.06] bg-white/[0.03]">
+                      <PiFilmSlateDuotone className="text-[20px] text-white/60" />
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[15px] font-semibold truncate">{cleanFileName}</p>
-                      <p className="mt-0.5 text-sm text-muted-foreground">Ready to patch</p>
+
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[14px] font-medium text-white">
+                        {cleanFileName}
+                      </p>
+
+                      <p className="mt-1 text-sm text-white/30">
+                        Ready to process
+                      </p>
                     </div>
+
                     <button type="button"
                       onClick={() => { setCleanFile(""); setCleanResult(null); }}
-                      className="text-muted-foreground/40 hover:text-muted-foreground shrink-0 transition-all duration-150 hover:scale-110 active:scale-90">
+                      className="text-white/30 hover:text-white/80 shrink-0 transition-colors duration-150">
                       <PiXCircleFill className="text-xl" />
                     </button>
                   </div>
 
                   {/* What this does */}
-                  <div className="anim-slide-up rounded-lg border border-border bg-card/25 px-4 py-3 space-y-1.5" style={{ animationDelay: "40ms" }}>
-                    <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-widest">What happens</p>
-                    <p className="text-[13px] text-muted-foreground leading-relaxed">
-                      Writes <span className="font-mono text-foreground/80 text-[12px]">0x00000001</span> into the display matrix{" "}
-                      <span className="font-mono text-foreground/80 text-[12px]">b</span> field of the{" "}
-                      <span className="font-mono text-foreground/80 text-[12px]">mvhd</span> box.
+                  <div className="anim-slide-up rounded-[28px] border border-white/[0.06] bg-white/[0.025] p-5 space-y-1.5" style={{ animationDelay: "40ms" }}>
+                    <p className="text-[12px] font-medium text-white/30">What happens</p>
+                    <p className="text-[13px] text-white/60 leading-relaxed">
+                      Writes <span className="font-mono text-white/80 text-[12px] bg-white/5 px-1.5 py-0.5 rounded-md">0x00000001</span> into the display matrix{" "}
+                      <span className="font-mono text-white/80 text-[12px] bg-white/5 px-1.5 py-0.5 rounded-md">b</span> field of the{" "}
+                      <span className="font-mono text-white/80 text-[12px] bg-white/5 px-1.5 py-0.5 rounded-md">mvhd</span> box.
                       TikTok's ingestion pipeline reads this non-standard value and routes the video through a lighter encode,
                       preserving quality instead of aggressively recompressing.
                     </p>
-                    <p className="text-[12px] text-muted-foreground/50">No re-encode. Instant. Output plays identically in all players.</p>
+                    <p className="text-[12px] text-white/30">No re-encode. Instant. Output plays identically in all players.</p>
                   </div>
 
                   <div className="flex-1" />
 
                   <div className="anim-fade space-y-4" style={{ animationDelay: "100ms" }}>
-                    <div className="border-t border-border" />
+                    <div className="border-t border-white/[0.06]" />
                     <button type="button" onClick={patchClean} disabled={!canClean}
-                      className={cn("w-full h-11 rounded-xl text-sm font-semibold transition-all duration-200",
+                      className={cn(
+                        "w-full h-11 rounded-2xl text-sm font-medium transition-colors",
                         canClean
-                          ? "bg-foreground text-background hover:bg-foreground/90 active:scale-[0.98] hover:scale-[1.005]"
-                          : "bg-accent/40 text-muted-foreground cursor-not-allowed")}>
+                          ? "bg-white text-black hover:bg-white/90"
+                          : "bg-white/5 text-white/20 cursor-not-allowed"
+                      )}>
                       {cleanProcessing
                         ? <span className="flex items-center justify-center gap-2"><PiSpinnerGapBold className="animate-spin" />Patching…</span>
                         : "Patch & Save"}
@@ -742,7 +798,7 @@ export default function App() {
                 <div key="filled" className="flex-1 flex flex-col gap-4 p-6 min-h-0">
 
                   {/* Video — flex-1 fills remaining vertical space */}
-                  <div className="anim-scale-in flex-1 min-h-[120px] rounded-lg overflow-hidden bg-black border border-border">
+                  <div className="anim-scale-in flex-1 min-h-[120px] rounded-[28px] overflow-hidden bg-black border border-white/[0.06]">
                     <video
                       ref={trimVideoRef}
                       src={trimVideoSrc}
@@ -767,24 +823,24 @@ export default function App() {
                         if (!v) return;
                         v.paused ? v.play() : v.pause();
                       }}
-                      className="w-9 h-9 rounded-xl bg-accent flex items-center justify-center hover:bg-accent/80 transition-colors active:scale-90 shrink-0"
+                      className="w-9 h-9 rounded-2xl bg-white/[0.025] border border-white/[0.06] text-white/70 flex items-center justify-center hover:bg-white/[0.05] hover:text-white transition-colors shrink-0"
                     >
                       {trimPlaying ? <PiPauseFill className="text-sm" /> : <PiPlayFill className="text-sm" />}
                     </button>
-                    <span className="text-sm font-mono tabular-nums">{fmt(trimCurrentTime)}</span>
-                    <span className="text-muted-foreground/40 text-sm">/</span>
-                    <span className="text-sm font-mono tabular-nums text-muted-foreground">{fmt(trimDuration)}</span>
+                    <span className="text-sm font-mono tabular-nums text-white/70">{fmt(trimCurrentTime)}</span>
+                    <span className="text-white/20 text-sm">/</span>
+                    <span className="text-sm font-mono tabular-nums text-white/40">{fmt(trimDuration)}</span>
                     <div className="flex-1" />
                     {(trimSegs.length > 0 || trimPendingIn !== null) && (
                       <button type="button"
                         onClick={() => { setTrimSegs([]); setTrimPendingIn(null); }}
-                        className="text-[12px] text-muted-foreground/40 hover:text-muted-foreground transition-colors">
+                        className="text-[12px] text-white/30 hover:text-white/80 transition-colors">
                         Clear all
                       </button>
                     )}
                     <button type="button"
                       onClick={() => { setTrimFile(""); setTrimVideoSrc(""); setTrimSegs([]); setTrimPendingIn(null); setTrimResult(null); }}
-                      className="text-muted-foreground/40 hover:text-muted-foreground transition-all duration-150 hover:scale-110 active:scale-90">
+                      className="text-white/30 hover:text-white/80 transition-colors shrink-0">
                       <PiXCircleFill className="text-lg" />
                     </button>
                   </div>
@@ -799,7 +855,7 @@ export default function App() {
                       videoRef={trimVideoRef}
                     />
                     <div className="flex items-center justify-between mt-1.5 px-0.5">
-                      <span className="text-[11px] font-mono tabular-nums text-muted-foreground/40">
+                      <span className="text-[11px] font-mono tabular-nums text-white/30">
                         {trimPendingIn !== null
                           ? <span className="anim-fade text-amber-400/80">[ {fmt(trimPendingIn)} …</span>
                           : trimSegs.length > 0
@@ -807,7 +863,7 @@ export default function App() {
                             : "press I to mark in"
                         }
                       </span>
-                      <span className="text-[11px] font-mono tabular-nums text-muted-foreground/40">
+                      <span className="text-[11px] font-mono tabular-nums text-white/30">
                         {trimTotalLen > 0 ? fmt(trimTotalLen) : ""}
                       </span>
                     </div>
@@ -817,10 +873,10 @@ export default function App() {
                   <div className="anim-slide-up flex gap-3 shrink-0" style={{ animationDelay: "100ms" }}>
                     <button type="button" onClick={markIn}
                       className={cn(
-                        "flex-1 h-10 flex items-center justify-center gap-2 rounded-xl border text-sm font-medium transition-all duration-150 active:scale-[0.97]",
+                        "flex-1 h-11 flex items-center justify-center gap-2 rounded-2xl border text-sm font-medium transition-colors",
                         trimPendingIn !== null
-                          ? "border-amber-500/40 bg-amber-500/8 text-amber-400"
-                          : "border-border text-muted-foreground hover:text-foreground hover:bg-accent/40"
+                          ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
+                          : "border-white/[0.06] bg-white/[0.025] text-white/70 hover:bg-white/[0.05] hover:text-white"
                       )}>
                       <span className="font-mono font-bold opacity-50 text-base leading-none">[</span>
                       <span>Set In</span>
@@ -828,10 +884,10 @@ export default function App() {
                     </button>
                     <button type="button" onClick={markOut} disabled={trimPendingIn === null}
                       className={cn(
-                        "flex-1 h-10 flex items-center justify-center gap-2 rounded-xl border text-sm font-medium transition-all duration-150 active:scale-[0.97]",
+                        "flex-1 h-11 flex items-center justify-center gap-2 rounded-2xl border text-sm font-medium transition-colors",
                         trimPendingIn !== null
-                          ? "border-border text-foreground hover:bg-accent/40 cursor-pointer"
-                          : "border-border/40 text-muted-foreground/30 cursor-not-allowed"
+                          ? "border-white/[0.06] bg-white/[0.025] text-white/70 hover:bg-white/[0.05] hover:text-white cursor-pointer"
+                          : "border-white/[0.03] text-white/20 cursor-not-allowed"
                       )}>
                       <span>Set Out</span>
                       <kbd className="text-[10px] font-mono opacity-35">O</kbd>
@@ -844,17 +900,17 @@ export default function App() {
                     <div className="anim-slide-up shrink-0 space-y-1 max-h-[120px] overflow-y-auto" style={{ animationDelay: "120ms" }}>
                       {trimSegs.map((seg, i) => (
                         <div key={seg.id}
-                          className="flex items-center gap-2 px-3 py-2 rounded-xl bg-accent/20 hover:bg-accent/30 transition-colors group">
-                          <span className="text-[10px] font-semibold text-muted-foreground/35 w-3 shrink-0 tabular-nums">{i + 1}</span>
-                          <span className="font-mono text-[12px] flex-1 tabular-nums">
+                          className="flex items-center gap-2 px-3 py-2 rounded-2xl border border-white/[0.06] bg-white/[0.025] hover:bg-white/[0.05] transition-colors group">
+                          <span className="text-[10px] font-semibold text-white/30 w-3 shrink-0 tabular-nums">{i + 1}</span>
+                          <span className="font-mono text-[12px] flex-1 text-white/70 tabular-nums">
                             {fmt(seg.inPoint)}
-                            <span className="text-muted-foreground/35 mx-1.5">→</span>
+                            <span className="text-white/30 mx-1.5">→</span>
                             {fmt(seg.outPoint)}
                           </span>
-                          <span className="text-[11px] font-mono tabular-nums text-muted-foreground/35 shrink-0">{fmt(seg.outPoint - seg.inPoint)}</span>
+                          <span className="text-[11px] font-mono tabular-nums text-white/30 shrink-0">{fmt(seg.outPoint - seg.inPoint)}</span>
                           <button type="button"
                             onClick={() => setTrimSegs(prev => prev.filter(s => s.id !== seg.id))}
-                            className="opacity-0 group-hover:opacity-100 text-muted-foreground/40 hover:text-destructive transition-all duration-150 ml-1 shrink-0">
+                            className="opacity-0 group-hover:opacity-100 text-white/30 hover:text-destructive transition-colors ml-1 shrink-0">
                             <PiXCircleFill className="text-sm" />
                           </button>
                         </div>
@@ -864,12 +920,14 @@ export default function App() {
 
                   {/* Export — pinned at bottom */}
                   <div className="shrink-0 space-y-3 pt-1">
-                    <div className="border-t border-border" />
+                    <div className="border-t border-white/[0.06]" />
                     <button type="button" onClick={exportClip} disabled={!canExport}
-                      className={cn("w-full h-11 rounded-xl text-sm font-semibold transition-all duration-200",
+                      className={cn(
+                        "w-full h-11 rounded-2xl text-sm font-medium transition-colors",
                         canExport
-                          ? "bg-foreground text-background hover:bg-foreground/90 active:scale-[0.98] hover:scale-[1.005]"
-                          : "bg-accent/40 text-muted-foreground cursor-not-allowed")}>
+                          ? "bg-white text-black hover:bg-white/90"
+                          : "bg-white/5 text-white/20 cursor-not-allowed"
+                      )}>
                       {trimProcessing
                         ? <span className="flex items-center justify-center gap-2"><PiSpinnerGapBold className="animate-spin" />Exporting…</span>
                         : trimSegs.length > 1
@@ -878,7 +936,6 @@ export default function App() {
                     </button>
                     {trimResult && <ResultBanner result={trimResult} />}
                   </div>
-
                 </div>
               </main>
             )}
@@ -908,12 +965,12 @@ export default function App() {
 
                   {/* Motion runtime install card */}
                   {motionRuntimeInstalled === false && (
-                    <div className="anim-slide-up rounded-xl border border-border bg-accent/5 px-4 py-4 space-y-3">
+                    <div className="anim-slide-up rounded-[28px] border border-white/[0.06] bg-white/[0.025] p-5 space-y-3">
                       <div className="flex items-start gap-2.5">
                         <PiDownloadSimpleDuotone className="text-emerald-400 text-lg shrink-0 mt-0.5" />
                         <div className="flex-1 min-w-0">
-                          <p className="text-[13px] font-semibold text-foreground">Motion engine not installed</p>
-                          <p className="text-[12px] text-muted-foreground/60 mt-0.5 leading-relaxed">
+                          <p className="text-[13px] font-semibold text-white">Motion engine not installed</p>
+                          <p className="text-[12px] text-white/50 mt-0.5 leading-relaxed">
                             The high-quality motion blur engine uses VapourSynth plugins (~40 MB). Click below to install automatically.
                           </p>
                         </div>
@@ -921,17 +978,17 @@ export default function App() {
                       {motionRuntimeInstalling ? (
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
-                            <span className="text-[13px] text-muted-foreground">Downloading motion engine…</span>
-                            <span className="text-[12px] font-mono text-muted-foreground/50 tabular-nums">{motionRuntimeProgress ?? 0}%</span>
+                            <span className="text-[13px] text-white/60">Downloading motion engine…</span>
+                            <span className="text-[12px] font-mono text-white/30 tabular-nums">{motionRuntimeProgress ?? 0}%</span>
                           </div>
-                          <div className="h-1.5 w-full rounded-full bg-accent/40 overflow-hidden">
-                            <div className="h-full bg-emerald-500 rounded-full transition-[width] duration-300 ease-out"
+                          <div className="h-1 overflow-hidden rounded-full bg-white/[0.04]">
+                            <div className="h-full rounded-full bg-white/40 transition-[width] duration-300"
                               style={{ width: `${motionRuntimeProgress ?? 0}%` }} />
                           </div>
                         </div>
                       ) : (
                         <button type="button" onClick={installMotionRuntime}
-                          className="motion-press w-full h-9 rounded-lg bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 text-[13px] font-medium hover:bg-emerald-500/25 flex items-center justify-center gap-2">
+                          className="w-full h-11 rounded-2xl bg-white px-5 text-sm font-medium text-black transition-colors hover:bg-white/90 flex items-center justify-center gap-2">
                           <PiDownloadSimpleDuotone className="text-base" />
                           Install motion engine
                         </button>
@@ -940,21 +997,25 @@ export default function App() {
                   )}
 
                   {/* File card */}
-                  <div className="anim-slide-up flex items-center gap-3 px-4 py-3 rounded-lg border border-border bg-card/35 transition-colors hover:bg-card/55">
-                    <div className="w-9 h-9 rounded-md bg-accent flex items-center justify-center shrink-0">
-                      <PiFilmSlateDuotone className="text-xl text-muted-foreground" />
+                  <div className="anim-slide-up flex items-center gap-4 rounded-[24px] border border-white/[0.06] bg-white/[0.025] p-4">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/[0.06] bg-white/[0.03]">
+                      <PiFilmSlateDuotone className="text-[20px] text-white/60" />
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[15px] font-semibold truncate">{renderFileName}</p>
-                      <div className="mt-0.5 text-sm text-muted-foreground h-5 flex items-center">
+
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[14px] font-medium text-white">
+                        {renderFileName}
+                      </p>
+
+                      <div className="mt-1 text-sm text-white/30 h-5 flex items-center">
                         {renderDetecting && (
                           <span className="anim-fade flex items-center gap-1.5">
                             <PiSpinnerGapBold className="animate-spin" />Detecting FPS…
                           </span>
                         )}
                         {!renderDetecting && renderInputFps !== null && (
-                          <span className="anim-fade">
-                            Source: <span className="text-foreground font-semibold">{Math.round(renderInputFps)} fps</span>
+                          <span className="anim-fade flex items-center gap-1.5">
+                            Source: <span className="text-white font-semibold">{Math.round(renderInputFps)} fps</span>
                           </span>
                         )}
                         {!renderDetecting && renderInputFps === null && (
@@ -962,9 +1023,10 @@ export default function App() {
                         )}
                       </div>
                     </div>
+
                     <button type="button"
                       onClick={() => { setRenderFile(""); setRenderInputFps(null); setRenderResult(null); }}
-                      className="text-muted-foreground/40 hover:text-muted-foreground shrink-0 transition-all duration-150 hover:scale-110 active:scale-90">
+                      className="text-white/30 hover:text-white/80 shrink-0 transition-colors duration-150">
                       <PiXCircleFill className="text-xl" />
                     </button>
                   </div>
@@ -972,8 +1034,8 @@ export default function App() {
                   {/* ── Blur Amount ── */}
                   <div className="anim-slide-up space-y-3" style={{ animationDelay: "40ms" }}>
                     <div className="flex items-baseline justify-between">
-                      <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-widest">Blur Amount</p>
-                      <p className="text-[12px] text-muted-foreground/50 tabular-nums">
+                      <p className="text-[12px] font-medium text-white/30">Blur Amount</p>
+                      <p className="text-[12px] text-white/30 tabular-nums">
                         {renderFramesBlended} frame{renderFramesBlended !== 1 ? "s" : ""} blended
                         {renderInputFps !== null && ` · ${Math.round(renderInputFps)}fps in → ${renderOutputFps}fps out`}
                       </p>
@@ -989,10 +1051,10 @@ export default function App() {
                       ].map(({ label, v }) => (
                         <button key={v} type="button" onClick={() => setBlurAmount(v)}
                           className={cn(
-                            "flex-1 h-10 rounded-xl border text-sm font-medium transition-all duration-200 active:scale-[0.97]",
+                            "flex-1 h-10 rounded-2xl border text-sm font-medium transition-colors",
                             blurAmount === v
-                              ? "bg-foreground text-background border-foreground"
-                              : "border-border text-muted-foreground hover:text-foreground hover:bg-accent/40"
+                              ? "bg-white text-black border-white"
+                              : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
                           )}>
                           {label}
                         </button>
@@ -1002,29 +1064,29 @@ export default function App() {
                           type="number" min="0.01" max="3" step="0.05"
                           value={blurAmount}
                           onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v > 0 && v <= 3) setBlurAmount(v); }}
-                          className="w-14 h-10 px-2 text-center font-mono text-[13px] bg-transparent border border-border rounded-xl outline-none focus:border-ring tabular-nums"
+                          className="w-14 h-10 px-2 text-center font-mono text-[13px] bg-transparent border border-white/[0.06] rounded-2xl outline-none text-white placeholder:text-white/20 focus:border-white/20 tabular-nums"
                         />
                       </div>
                     </div>
                   </div>
 
-                  <div className="anim-slide-up rounded-lg border border-border bg-card/25 px-4 py-3 space-y-3" style={{ animationDelay: "55ms" }}>
+                  <div className="anim-slide-up rounded-[28px] border border-white/[0.06] bg-white/[0.025] p-5 space-y-3" style={{ animationDelay: "55ms" }}>
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-widest">Smoothie Recipe</p>
-                        <p className="mt-1 text-[12px] text-muted-foreground/50">
+                        <p className="text-[12px] font-medium text-white/30">Smoothie Recipe</p>
+                        <p className="mt-1 text-[12px] text-white/40">
                           {smoothieRecipeName ? `Using ${smoothieRecipeName}` : "Optional: import recipe.ini from Smoothie for matching settings."}
                         </p>
                       </div>
                       <div className="flex gap-2 shrink-0">
                         {smoothieRecipeText && (
                           <button type="button" onClick={() => { setSmoothieRecipeText(""); setSmoothieRecipeName(""); localStorage.removeItem("smth.recipeText"); localStorage.removeItem("smth.recipeName"); }}
-                            className="h-8 px-3 rounded-lg border border-border text-[12px] text-muted-foreground hover:text-foreground hover:bg-accent/40">
+                            className="h-9 rounded-xl border border-white/[0.06] bg-white/[0.025] px-4 text-xs font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white">
                             Clear
                           </button>
                         )}
                         <button type="button" onClick={importSmoothieRecipe}
-                          className="h-8 px-3 rounded-lg border border-border text-[12px] font-medium text-muted-foreground hover:text-foreground hover:bg-accent/40">
+                          className="h-9 rounded-xl border border-white/[0.06] bg-white/[0.025] px-4 text-xs font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white">
                           Import .ini
                         </button>
                       </div>
@@ -1033,15 +1095,15 @@ export default function App() {
 
                   {/* ── Output FPS ── */}
                   <div className="anim-slide-up space-y-3" style={{ animationDelay: "70ms" }}>
-                    <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-widest">Output FPS</p>
+                    <p className="text-[12px] font-medium text-white/30">Output FPS</p>
                     <div className="flex items-center gap-2">
                       {[30, 60, 120].map((fps) => (
                         <button key={fps} type="button" onClick={() => setRenderOutputFps(fps)}
                           className={cn(
-                            "flex-1 h-10 rounded-xl border text-sm font-semibold transition-all duration-200 active:scale-[0.97]",
+                            "flex-1 h-10 rounded-2xl border text-sm font-medium transition-colors",
                             renderOutputFps === fps
-                              ? "bg-foreground text-background border-foreground"
-                              : "border-border text-muted-foreground hover:text-foreground hover:bg-accent/40"
+                              ? "bg-white text-black border-white"
+                              : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
                           )}>
                           {fps}
                         </button>
@@ -1051,16 +1113,16 @@ export default function App() {
                           type="number" min="1" max="960"
                           value={renderOutputFps}
                           onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v > 0) setRenderOutputFps(v); }}
-                          className="w-16 h-10 px-2 text-center font-mono text-[13px] bg-transparent border border-border rounded-xl outline-none focus:border-ring tabular-nums"
+                          className="w-16 h-10 px-2 text-center font-mono text-[13px] bg-transparent border border-white/[0.06] rounded-2xl outline-none text-white placeholder:text-white/20 focus:border-white/20 tabular-nums"
                         />
-                        <span className="text-[12px] text-muted-foreground/40">fps</span>
+                        <span className="text-[12px] text-white/30">fps</span>
                       </div>
                     </div>
                   </div>
 
                   {/* ── Weighting ── */}
                   <div className="anim-slide-up space-y-3" style={{ animationDelay: "100ms" }}>
-                    <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-widest">Weighting</p>
+                    <p className="text-[12px] font-medium text-white/30">Weighting</p>
                     <div className="flex gap-2">
                       {[
                         { id: "equal", label: "Equal", hint: "uniform" },
@@ -1071,13 +1133,13 @@ export default function App() {
                       ].map(({ id, label, hint }) => (
                         <button key={id} type="button" onClick={() => setBlendWeighting(id)}
                           className={cn(
-                            "flex-1 h-14 rounded-xl border font-medium flex flex-col items-center justify-center gap-0.5 transition-all duration-200 active:scale-[0.97]",
+                            "flex-1 h-14 rounded-2xl border font-medium flex flex-col items-center justify-center gap-0.5 transition-colors",
                             blendWeighting === id
-                              ? "bg-foreground text-background border-foreground scale-[1.02]"
-                              : "border-border text-muted-foreground hover:text-foreground hover:bg-accent/40"
+                              ? "bg-white text-black border-white"
+                              : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
                           )}>
                           <span className="text-[11px] font-semibold leading-none">{label}</span>
-                          <span className={cn("text-[9px] font-normal mt-0.5", blendWeighting === id ? "opacity-60" : "opacity-35")}>{hint}</span>
+                          <span className={cn("text-[9px] font-normal mt-0.5", blendWeighting === id ? "opacity-60 text-black/60" : "opacity-35 text-white/30")}>{hint}</span>
                         </button>
                       ))}
                     </div>
@@ -1089,9 +1151,9 @@ export default function App() {
                           onChange={e => setCustomWeights(e.target.value)}
                           placeholder="e.g.  1 2 4 8 4 2 1"
                           spellCheck={false}
-                          className="w-full h-9 px-3 font-mono text-[13px] bg-transparent border border-border rounded-xl outline-none placeholder:text-muted-foreground/25 focus:border-ring"
+                          className="w-full h-11 px-3 font-mono text-[13px] bg-transparent border border-white/[0.06] rounded-2xl outline-none text-white placeholder:text-white/20 focus:border-white/20"
                         />
-                        <p className="text-[11px] text-muted-foreground/35">Space-separated weights — one per blended frame</p>
+                        <p className="text-[11px] text-white/30">Space-separated weights — one per blended frame</p>
                       </div>
                     )}
                   </div>
@@ -1099,28 +1161,32 @@ export default function App() {
                   {/* ── Interpolation ── */}
                   <div className="anim-slide-up space-y-3" style={{ animationDelay: "130ms" }}>
                     <div className="flex items-center justify-between">
-                      <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-widest">Interpolation</p>
-                      <p className="text-[11px] text-muted-foreground/35">slow — CPU intensive</p>
+                      <p className="text-[12px] font-medium text-white/30">Interpolation</p>
+                      <p className="text-[11px] text-white/30">slow — CPU intensive</p>
                     </div>
                     <div className="flex items-center gap-2">
                       <button type="button" onClick={() => setInterpolateOn(false)}
-                        className={cn("h-10 px-5 rounded-xl border text-sm font-medium transition-all duration-200 active:scale-[0.97]",
-                          !interpolateOn ? "bg-foreground text-background border-foreground" : "border-border text-muted-foreground hover:text-foreground hover:bg-accent/40")}>
+                        className={cn("h-10 px-5 rounded-2xl border text-sm font-medium transition-colors",
+                          !interpolateOn
+                            ? "bg-white text-black border-white"
+                            : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]")}>
                         Off
                       </button>
                       <button type="button" onClick={() => setInterpolateOn(true)}
-                        className={cn("h-10 px-5 rounded-xl border text-sm font-medium transition-all duration-200 active:scale-[0.97]",
-                          interpolateOn ? "bg-foreground text-background border-foreground" : "border-border text-muted-foreground hover:text-foreground hover:bg-accent/40")}>
+                        className={cn("h-10 px-5 rounded-2xl border text-sm font-medium transition-colors",
+                          interpolateOn
+                            ? "bg-white text-black border-white"
+                            : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]")}>
                         On
                       </button>
                       {interpolateOn && (
                         <div className="anim-fade ml-2 flex items-center gap-2 flex-1">
                           {[360, 480, 960].map(fps => (
                             <button key={fps} type="button" onClick={() => setInterpolateFpsValue(fps)}
-                              className={cn("h-10 px-3 rounded-xl border text-sm font-medium transition-all duration-200 active:scale-[0.97]",
+                              className={cn("h-10 px-3 rounded-2xl border text-sm font-medium transition-colors",
                                 interpolateFpsValue === fps
-                                  ? "bg-foreground text-background border-foreground"
-                                  : "border-border text-muted-foreground hover:text-foreground hover:bg-accent/40")}>
+                                  ? "bg-white text-black border-white"
+                                  : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]")}>
                               {fps}
                             </button>
                           ))}
@@ -1129,9 +1195,9 @@ export default function App() {
                               type="number" min="1" max="9999"
                               value={interpolateFpsValue}
                               onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v > 0) setInterpolateFpsValue(v); }}
-                              className="w-16 h-10 px-2 text-center font-mono text-[13px] bg-transparent border border-border rounded-xl outline-none focus:border-ring tabular-nums"
+                              className="w-16 h-10 px-2 text-center font-mono text-[13px] bg-transparent border border-white/[0.06] rounded-2xl outline-none text-white placeholder:text-white/20 focus:border-white/20 tabular-nums"
                             />
-                            <span className="text-[12px] text-muted-foreground/40">fps</span>
+                            <span className="text-[12px] text-white/30">fps</span>
                           </div>
                         </div>
                       )}
@@ -1140,15 +1206,15 @@ export default function App() {
 
                   {/* ── Timescale ── */}
                   <div className="anim-slide-up space-y-3" style={{ animationDelay: "160ms" }}>
-                    <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-widest">Timescale</p>
+                    <p className="text-[12px] font-medium text-white/30">Timescale</p>
                     <div className="flex items-center gap-2">
                       {[0.25, 0.5, 1, 2].map((ts) => (
                         <button key={ts} type="button" onClick={() => setRenderTimescale(ts)}
                           className={cn(
-                            "flex-1 h-10 rounded-xl border text-sm font-medium transition-all duration-200 active:scale-[0.97]",
+                            "flex-1 h-10 rounded-2xl border text-sm font-medium transition-colors",
                             renderTimescale === ts
-                              ? "bg-foreground text-background border-foreground"
-                              : "border-border text-muted-foreground hover:text-foreground hover:bg-accent/40"
+                              ? "bg-white text-black border-white"
+                              : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
                           )}>
                           {ts}×
                         </button>
@@ -1158,23 +1224,23 @@ export default function App() {
                           type="number" min="0.05" max="10" step="0.05"
                           value={renderTimescale}
                           onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v > 0) setRenderTimescale(v); }}
-                          className="w-16 h-10 px-2 text-center font-mono text-[13px] bg-transparent border border-border rounded-xl outline-none focus:border-ring tabular-nums"
+                          className="w-16 h-10 px-2 text-center font-mono text-[13px] bg-transparent border border-white/[0.06] rounded-2xl outline-none text-white placeholder:text-white/20 focus:border-white/20 tabular-nums"
                         />
-                        <span className="text-[12px] text-muted-foreground/40">×</span>
+                        <span className="text-[12px] text-white/30">×</span>
                       </div>
                     </div>
-                    <p className="text-[11px] text-muted-foreground/35">
+                    <p className="text-[11px] text-white/30">
                       {renderTimescale === 1 ? "Normal speed" : renderTimescale < 1 ? `Slow to ${Math.round(renderTimescale * 100)}%` : `Speed up ${renderTimescale}×`}
                     </p>
                   </div>
 
                   {/* Output quality + encoder */}
                   <div className="anim-slide-up space-y-4" style={{ animationDelay: "200ms" }}>
-                    <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-widest">Output</p>
+                    <p className="text-[12px] font-medium text-white/30">Output</p>
                     <div className="grid grid-cols-2 gap-3">
                       {/* Quality */}
                       <div className="space-y-2">
-                        <p className="text-[10px] text-muted-foreground/35 uppercase tracking-wider font-medium">Quality</p>
+                        <p className="text-[11px] text-white/30 font-medium">Quality</p>
                         <div className="flex gap-2">
                           {[
                             { label: "High", crf: 17 },
@@ -1183,10 +1249,10 @@ export default function App() {
                           ].map(({ label, crf }) => (
                             <button key={crf} type="button" onClick={() => setRenderCrf(crf)}
                               className={cn(
-                                "flex-1 h-10 rounded-xl border text-sm font-medium transition-all duration-200 active:scale-[0.97]",
+                                "flex-1 h-10 rounded-2xl border text-sm font-medium transition-colors",
                                 renderCrf === crf
-                                  ? "bg-foreground text-background border-foreground"
-                                  : "border-border text-muted-foreground hover:text-foreground hover:bg-accent/40"
+                                  ? "bg-white text-black border-white"
+                                  : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
                               )}>
                               {label}
                             </button>
@@ -1195,7 +1261,7 @@ export default function App() {
                       </div>
                       {/* Encoder */}
                       <div className="space-y-2">
-                        <p className="text-[10px] text-muted-foreground/35 uppercase tracking-wider font-medium">Encoder</p>
+                        <p className="text-[11px] text-white/30 font-medium">Encoder</p>
                         <div className="flex gap-2">
                           {[
                             { label: "CPU", id: "libx264" },
@@ -1203,10 +1269,10 @@ export default function App() {
                           ].map(({ label, id }) => (
                             <button key={id} type="button" onClick={() => setRenderEncoder(id)}
                               className={cn(
-                                "flex-1 h-10 rounded-xl border text-sm font-medium transition-all duration-200 active:scale-[0.97]",
+                                "flex-1 h-10 rounded-2xl border text-sm font-medium transition-colors",
                                 renderEncoder === id
-                                  ? "bg-foreground text-background border-foreground"
-                                  : "border-border text-muted-foreground hover:text-foreground hover:bg-accent/40"
+                                  ? "bg-white text-black border-white"
+                                  : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
                               )}>
                               {label}
                             </button>
@@ -1214,7 +1280,7 @@ export default function App() {
                         </div>
                       </div>
                     </div>
-                    <p className="text-[11px] text-muted-foreground/35">
+                    <p className="text-[11px] text-white/30">
                       CRF {renderCrf} · {renderEncoder === "h264_nvenc" ? "NVENC — requires NVIDIA GPU" : "libx264"}
                     </p>
                   </div>
@@ -1223,26 +1289,28 @@ export default function App() {
 
                   {/* Render */}
                   <div className="anim-fade space-y-4" style={{ animationDelay: "200ms" }}>
-                    <div className="border-t border-border" />
+                    <div className="border-t border-white/[0.06]" />
                     {renderProcessing ? (
                       <div className="space-y-3">
-                        <div className="h-1.5 w-full rounded-full bg-accent/40 overflow-hidden">
+                        <div className="h-1 overflow-hidden rounded-full bg-white/[0.04]">
                           <div
-                            className="h-full bg-foreground rounded-full transition-[width] duration-300 ease-out"
+                            className="h-full rounded-full bg-white/40 transition-[width] duration-300"
                             style={{ width: `${Math.round((renderProgress ?? 0) * 100)}%` }}
                           />
                         </div>
-                        <div className="flex items-center justify-between text-[12px] text-muted-foreground tabular-nums">
+                        <div className="flex items-center justify-between text-[12px] text-white/30 tabular-nums">
                           <span>{Math.round((renderProgress ?? 0) * 100)}%</span>
                           <span className="text-[11px] opacity-60">{renderEncoder === "h264_nvenc" ? "NVENC" : "libx264"}</span>
                         </div>
                       </div>
                     ) : (
                       <button type="button" onClick={processRender} disabled={!canRender}
-                        className={cn("w-full h-11 rounded-xl text-sm font-semibold transition-all duration-200",
+                        className={cn(
+                          "w-full h-11 rounded-2xl text-sm font-medium transition-colors",
                           canRender
-                            ? "bg-foreground text-background hover:bg-foreground/90 active:scale-[0.98] hover:scale-[1.005]"
-                            : "bg-accent/40 text-muted-foreground cursor-not-allowed")}>
+                            ? "bg-white text-black hover:bg-white/90"
+                            : "bg-white/5 text-white/20 cursor-not-allowed"
+                        )}>
                         Render
                       </button>
                     )}
@@ -1270,33 +1338,40 @@ export default function App() {
               </main>
             )}
 
-            {!!discordFile && (
+            {!!discordFile && (<>
               <main className="flex-1 overflow-auto">
                 <div key="filled" className="min-h-full flex flex-col p-8 gap-8">
 
                   {/* File card */}
-                  <div className="anim-slide-up flex items-center gap-3 px-4 py-3 rounded-lg border border-border bg-card/35 transition-colors hover:bg-card/55">
-                    <div className="w-9 h-9 rounded-md bg-accent flex items-center justify-center shrink-0">
-                      <PiFilmSlateDuotone className="text-xl text-muted-foreground" />
+                  <div className="anim-slide-up flex items-center gap-4 rounded-[24px] border border-white/[0.06] bg-white/[0.025] p-4">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/[0.06] bg-white/[0.03]">
+                      <PiFilmSlateDuotone className="text-[20px] text-white/60" />
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[15px] font-semibold truncate">{discordFileName}</p>
-                      <p className="mt-0.5 text-sm text-muted-foreground">Ready to compress</p>
+
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[14px] font-medium text-white">
+                        {discordFileName}
+                      </p>
+
+                      <p className="mt-1 text-sm text-white/30">
+                        Ready to process
+                      </p>
                     </div>
+
                     <button type="button"
                       onClick={() => { setDiscordFile(""); setDiscordResult(null); setDiscordProgress(null); }}
-                      className="text-muted-foreground/40 hover:text-muted-foreground shrink-0 transition-all duration-150 hover:scale-110 active:scale-90">
+                      className="text-white/30 hover:text-white/80 shrink-0 transition-colors duration-150">
                       <PiXCircleFill className="text-xl" />
                     </button>
                   </div>
 
                   {/* Info card */}
-                  <div className="anim-slide-up rounded-lg border border-border bg-card/25 px-4 py-3 space-y-1.5" style={{ animationDelay: "40ms" }}>
-                    <p className="text-[11px] font-semibold text-muted-foreground/50 uppercase tracking-widest">What happens</p>
-                    <p className="text-[13px] text-muted-foreground leading-relaxed">
+                  <div className="anim-slide-up rounded-[28px] border border-white/[0.06] bg-white/[0.025] p-5 space-y-1.5" style={{ animationDelay: "40ms" }}>
+                    <p className="text-[12px] font-medium text-white/30">What happens</p>
+                    <p className="text-[13px] text-white/60 leading-relaxed">
                       Calculates the exact bitrate needed to fit the video under{" "}
-                      <span className="font-semibold text-foreground">8 MB</span>, then re-encodes with{" "}
-                      <span className="font-mono text-foreground/80 text-[12px]">libx264</span> using a fast preset.
+                      <span className="font-semibold text-white">8 MB</span>, then re-encodes with{" "}
+                      <span className="font-mono text-white/80 text-[12px] bg-white/5 px-1.5 py-0.5 rounded-md">libx264</span> using a fast preset.
                       Resolution is scaled down automatically if the bitrate gets too low.
                     </p>
                   </div>
@@ -1305,26 +1380,28 @@ export default function App() {
 
                   {/* Compress */}
                   <div className="anim-fade space-y-4" style={{ animationDelay: "100ms" }}>
-                    <div className="border-t border-border" />
+                    <div className="border-t border-white/[0.06]" />
                     {discordProcessing ? (
                       <div className="space-y-3">
-                        <div className="h-1.5 w-full rounded-full bg-accent/40 overflow-hidden">
+                        <div className="h-1 overflow-hidden rounded-full bg-white/[0.04]">
                           <div
-                            className="h-full bg-foreground rounded-full transition-[width] duration-300 ease-out"
+                            className="h-full rounded-full bg-white/40 transition-[width] duration-300"
                             style={{ width: `${Math.round((discordProgress ?? 0) * 100)}%` }}
                           />
                         </div>
-                        <div className="flex items-center justify-between text-[12px] text-muted-foreground tabular-nums">
+                        <div className="flex items-center justify-between text-[12px] text-white/30 tabular-nums">
                           <span>{Math.round((discordProgress ?? 0) * 100)}%</span>
                           <span className="text-[11px] opacity-60">libx264 · veryfast</span>
                         </div>
                       </div>
                     ) : (
                       <button type="button" onClick={compressForDiscord} disabled={!canDiscord}
-                        className={cn("w-full h-11 rounded-xl text-sm font-semibold transition-all duration-200",
+                        className={cn(
+                          "w-full h-11 rounded-2xl text-sm font-medium transition-colors",
                           canDiscord
-                            ? "bg-foreground text-background hover:bg-foreground/90 active:scale-[0.98] hover:scale-[1.005]"
-                            : "bg-accent/40 text-muted-foreground cursor-not-allowed")}>
+                            ? "bg-white text-black hover:bg-white/90"
+                            : "bg-white/5 text-white/20 cursor-not-allowed"
+                        )}>
                         Compress for Discord
                       </button>
                     )}
@@ -1333,152 +1410,172 @@ export default function App() {
 
                 </div>
               </main>
-            )}
+            </>)}
           </>
         )}
 
         {/* ─ Settings ─ */}
         {view === "settings" && (
           <>
-            <Header {...VIEW_META.settings} />
             <main className="flex-1 overflow-auto">
-              <div className="mx-auto grid w-full max-w-5xl grid-cols-[minmax(0,1fr)_280px] gap-5 p-6">
+              <div className="mx-auto grid w-full max-w-7xl grid-cols-[minmax(0,1fr)_340px] gap-6 p-8">
 
-                <section className="anim-slide-up rounded-lg border border-border bg-card/30">
-                  <div className="border-b border-border px-4 py-3">
-                    <p className="text-[13px] font-medium">FFmpeg executable</p>
-                    <p className="mt-1 text-[12px] text-muted-foreground">Used for compression, trimming, rendering, and metadata reads.</p>
-                  </div>
-                  <div className="p-4">
-                    <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
-                      <input type="text" value={ffmpegPath} onChange={e => saveFfmpegPath(e.target.value)}
-                        placeholder="C:\path\to\ffmpeg.exe" spellCheck={false}
-                        className={cn("h-9 min-w-0 rounded-md border bg-background/40 px-3 font-mono text-[12px] outline-none placeholder:text-muted-foreground/30 transition-colors duration-150 focus:border-ring",
-                          ffmpegValid === false ? "border-destructive/50" : "border-border")} />
-                      <button type="button" onClick={pickFfmpeg}
-                        className="motion-press h-9 px-3 text-[13px] border border-border rounded-md shrink-0 text-muted-foreground hover:text-foreground hover:bg-accent/50 flex items-center gap-1.5">
-                        <PiFolderOpenDuotone className="text-base" />Browse
-                      </button>
-                      <span className="grid size-9 place-items-center">
-                        {ffmpegValid === true && <PiCheckCircleFill className="anim-pop text-emerald-500 text-lg shrink-0" />}
-                        {ffmpegValid === false && <PiXCircleFill className="anim-scale-in text-destructive text-lg shrink-0" />}
-                      </span>
+                {/* left */}
+                <div className="space-y-6">
+                  <div className="rounded-[28px] border border-white/[0.06] bg-white/[0.025]">
+                    <div className="border-b border-white/[0.06] px-7 py-6">
+                      <p className="text-[15px] font-medium text-white">
+                        FFmpeg executable
+                      </p>
+
+                      <p className="mt-1 text-sm text-white/35">
+                        Used for compression, trimming, rendering, and metadata reads.
+                      </p>
                     </div>
-                    {ffmpegValid === false && (
-                      <p className="anim-slide-down text-[12px] text-destructive mt-2">Not a valid ffmpeg executable.</p>
-                    )}
-                  </div>
-                </section>
 
-                <section className="anim-slide-up rounded-lg border border-border bg-card/30" style={{ animationDelay: "15ms" }}>
-                  <div className="border-b border-border px-4 py-3">
-                    <p className="text-[13px] font-medium">Account</p>
-                    <p className="mt-1 text-[12px] text-muted-foreground">Auth callbacks are handled by Rust through xype://auth/callback.</p>
-                  </div>
-                  <div className="p-4 space-y-3">
-                    {authSession ? (
-                      <>
-                        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
-                          <p className="text-[13px] font-medium text-emerald-400">Logged in</p>
-                          <p className="mt-1 text-[12px] text-muted-foreground">{authSession.email}</p>
-                          <p className="mt-1 text-[11px] font-mono text-muted-foreground/45 truncate">{authSession.user_id}</p>
-                        </div>
-                        <button type="button" onClick={logoutAuth}
-                          className="motion-press h-9 px-4 text-[13px] border border-border rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/40">
-                          Log out
+                    <div className="p-7">
+                      <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
+                        <input type="text" value={ffmpegPath} onChange={e => saveFfmpegPath(e.target.value)}
+                          placeholder="C:\path\to\ffmpeg.exe" spellCheck={false}
+                          className={cn("h-11 min-w-0 rounded-2xl border bg-white/[0.02] border-white/[0.06] px-4 font-mono text-[13px] text-white outline-none placeholder:text-white/20 transition-colors focus:border-white/20",
+                            ffmpegValid === false ? "border-destructive/50" : "border-white/[0.06]")} />
+                        <button type="button" onClick={pickFfmpeg}
+                          className="h-11 px-5 rounded-2xl border border-white/[0.06] bg-white/[0.025] text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white flex items-center gap-1.5 shrink-0">
+                          <PiFolderOpenDuotone className="text-base" />Browse
                         </button>
-                      </>
-                    ) : (
-                      <div className="rounded-xl border border-border bg-accent/5 px-4 py-3">
-                        <p className="text-[13px] text-muted-foreground">Not logged in.</p>
-                        <p className="mt-1 text-[12px] text-muted-foreground/50">Open a valid auth deep link to sign in.</p>
+                        <span className="grid size-11 place-items-center">
+                          {ffmpegValid === true && <PiCheckCircleFill className="anim-pop text-emerald-500 text-lg shrink-0" />}
+                          {ffmpegValid === false && <PiXCircleFill className="anim-scale-in text-destructive text-lg shrink-0" />}
+                        </span>
+                      </div>
+                      {ffmpegValid === false && (
+                        <p className="anim-slide-down text-[12px] text-destructive mt-2">Not a valid ffmpeg executable.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="rounded-[28px] border border-white/[0.06] bg-white/[0.025]">
+                    <div className="border-b border-white/[0.06] px-7 py-6">
+                      <p className="text-[15px] font-medium text-white">
+                        Account
+                      </p>
+
+                      <p className="mt-1 text-sm text-white/35">
+                        Manage your subscription and auth session.
+                      </p>
+                    </div>
+
+                    <div className="p-7 space-y-4">
+                      {authSession ? (
+                        <>
+                          <div className="rounded-[20px] border border-emerald-500/20 bg-emerald-500/5 px-5 py-4">
+                            <p className="text-[14px] font-medium text-emerald-400">Logged in</p>
+                            <p className="mt-1 text-sm text-white/60">{authSession.email}</p>
+                            <p className="mt-1 text-[12px] font-mono text-white/30 truncate">{authSession.user_id}</p>
+                          </div>
+                          <button type="button" onClick={logoutAuth}
+                            className="h-11 rounded-2xl border border-white/[0.06] bg-white/[0.025] px-5 text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white">
+                            Log out
+                          </button>
+                        </>
+                      ) : (
+                        <div className="rounded-[20px] border border-white/[0.06] bg-white/[0.015] px-5 py-4">
+                          <p className="text-[14px] text-white/60">Not logged in.</p>
+                          <p className="mt-1 text-sm text-white/30">Open a valid auth deep link to sign in.</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* right */}
+                <div className="space-y-6">
+                  <div className="rounded-[28px] border border-white/[0.06] bg-white/[0.025] p-6 space-y-4">
+                    <div className="flex items-center justify-between border-b border-white/[0.06] pb-4">
+                      <div>
+                        <p className="text-[15px] font-medium text-white">Updates</p>
+                        <p className="mt-0.5 text-[12px] text-white/35">Keep xype up to date</p>
+                      </div>
+                      <span className="text-[12px] text-white/30 font-mono bg-white/[0.04] px-2.5 py-1 rounded-full border border-white/[0.06]">{appVersion ? `v${appVersion}` : ""}</span>
+                    </div>
+
+                    {/* Status card */}
+                    {updateStatus === "checking" && (
+                      <div className="anim-fade flex items-center gap-2.5 px-4 py-3 rounded-2xl border border-white/[0.06] bg-white/[0.01]">
+                        <PiSpinnerGapBold className="animate-spin text-white/30 shrink-0" />
+                        <span className="text-sm text-white/60">Checking for updates…</span>
                       </div>
                     )}
-                  </div>
-                </section>
 
-                <section className="anim-slide-up rounded-lg border border-border bg-card/30 space-y-4 p-4" style={{ animationDelay: "30ms" }}>
-                  <div className="flex items-center justify-between">
-                    <p className="text-[13px] font-medium">Updates</p>
-                    <span className="text-[11px] text-muted-foreground/50 font-mono">{appVersion ? `v${appVersion}` : ""}</span>
-                  </div>
+                    {updateStatus === "uptodate" && (
+                      <div className="anim-fade flex items-center gap-2.5 px-4 py-3 rounded-2xl border border-white/[0.06] bg-white/[0.01]">
+                        <PiCheckCircleFill className="text-emerald-500 shrink-0" />
+                        <span className="text-sm text-white/60">You're on the latest version.</span>
+                      </div>
+                    )}
 
-                  {/* Status card */}
-                  {updateStatus === "checking" && (
-                    <div className="anim-fade flex items-center gap-2.5 px-4 py-3 rounded-xl border border-border bg-accent/5">
-                      <PiSpinnerGapBold className="animate-spin text-muted-foreground shrink-0" />
-                      <span className="text-[13px] text-muted-foreground">Checking for updates…</span>
-                    </div>
-                  )}
+                    {updateStatus === "available" && updateInfo && (
+                      <div className="anim-slide-down rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4 space-y-3">
+                        <div className="flex items-start gap-2.5">
+                          <PiDownloadSimpleDuotone className="text-emerald-400 text-lg shrink-0 mt-0.5" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-emerald-400">v{updateInfo.version} available</p>
+                            {updateInfo.body && (
+                              <p className="text-[12px] text-white/50 mt-1 leading-relaxed">{updateInfo.body}</p>
+                            )}
+                          </div>
+                        </div>
+                        <button type="button" onClick={doInstallUpdate}
+                          className="w-full h-11 rounded-2xl bg-white text-sm font-medium text-black transition-colors hover:bg-white/90">
+                          Download &amp; Install
+                        </button>
+                      </div>
+                    )}
 
-                  {updateStatus === "uptodate" && (
-                    <div className="anim-fade flex items-center gap-2.5 px-4 py-3 rounded-xl border border-border bg-accent/5">
-                      <PiCheckCircleFill className="text-emerald-500 shrink-0" />
-                      <span className="text-[13px] text-muted-foreground">You're on the latest version.</span>
-                    </div>
-                  )}
-
-                  {updateStatus === "available" && updateInfo && (
-                    <div className="anim-slide-down rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 space-y-3">
-                      <div className="flex items-start gap-2.5">
-                        <PiDownloadSimpleDuotone className="text-emerald-400 text-lg shrink-0 mt-0.5" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-[13px] font-semibold text-emerald-400">v{updateInfo.version} available</p>
-                          {updateInfo.body && (
-                            <p className="text-[12px] text-muted-foreground/60 mt-0.5 leading-relaxed">{updateInfo.body}</p>
-                          )}
+                    {updateStatus === "downloading" && (
+                      <div className="anim-fade rounded-2xl border border-white/[0.06] bg-white/[0.01] p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-white/60">Downloading update…</span>
+                          <span className="text-[12px] font-mono text-white/30 tabular-nums">{updateProgress}%</span>
+                        </div>
+                        <div className="h-1 overflow-hidden rounded-full bg-white/[0.04]">
+                          <div
+                            className="h-full rounded-full bg-white/40 transition-[width] duration-300"
+                            style={{ width: `${updateProgress}%` }}
+                          />
                         </div>
                       </div>
-                      <button type="button" onClick={doInstallUpdate}
-                        className="motion-press w-full h-9 rounded-lg bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 text-[13px] font-medium hover:bg-emerald-500/25">
-                        Download &amp; Install
+                    )}
+
+                    {updateStatus === "ready" && (
+                      <div className="anim-slide-down rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4 space-y-3">
+                        <div className="flex items-center gap-2.5">
+                          <PiCheckCircleFill className="text-emerald-400 shrink-0" />
+                          <p className="text-sm text-emerald-400 font-medium">Update installed. Restart to apply.</p>
+                        </div>
+                        <button type="button" onClick={() => relaunch()}
+                          className="w-full h-11 rounded-2xl bg-white text-sm font-medium text-black transition-colors hover:bg-white/90 flex items-center justify-center gap-2">
+                          <PiArrowCounterClockwiseDuotone className="text-base" />
+                          Restart now
+                        </button>
+                      </div>
+                    )}
+
+                    {updateStatus === "error" && (
+                      <div className="anim-fade rounded-2xl border border-destructive/20 bg-destructive/5 px-4 py-3">
+                        <p className="text-sm text-destructive">{updateError || "Update check failed."}</p>
+                      </div>
+                    )}
+
+                    {(updateStatus === "idle" || updateStatus === "uptodate" || updateStatus === "error") && (
+                      <button type="button" onClick={doCheckUpdate}
+                        className="w-full h-11 rounded-2xl border border-white/[0.06] bg-white/[0.025] px-5 text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white flex items-center justify-center gap-1.5">
+                        <PiArrowsClockwiseDuotone className="text-base" />
+                        Check for updates
                       </button>
-                    </div>
-                  )}
-
-                  {updateStatus === "downloading" && (
-                    <div className="anim-fade rounded-xl border border-border bg-accent/5 px-4 py-4 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[13px] text-muted-foreground">Downloading update…</span>
-                        <span className="text-[12px] font-mono text-muted-foreground/50 tabular-nums">{updateProgress}%</span>
-                      </div>
-                      <div className="h-1.5 w-full rounded-full bg-accent/40 overflow-hidden">
-                        <div
-                          className="h-full bg-emerald-500 rounded-full transition-[width] duration-300 ease-out"
-                          style={{ width: `${updateProgress}%` }}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {updateStatus === "ready" && (
-                    <div className="anim-slide-down rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 space-y-3">
-                      <div className="flex items-center gap-2.5">
-                        <PiCheckCircleFill className="text-emerald-400 shrink-0" />
-                        <p className="text-[13px] text-emerald-400 font-medium">Update installed. Restart to apply.</p>
-                      </div>
-                      <button type="button" onClick={() => relaunch()}
-                        className="motion-press w-full h-9 rounded-lg bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 text-[13px] font-medium hover:bg-emerald-500/25 flex items-center justify-center gap-2">
-                        <PiArrowCounterClockwiseDuotone className="text-base" />
-                        Restart now
-                      </button>
-                    </div>
-                  )}
-
-                  {updateStatus === "error" && (
-                    <div className="anim-fade rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3">
-                      <p className="text-[13px] text-destructive/80">{updateError || "Update check failed."}</p>
-                    </div>
-                  )}
-
-                  {(updateStatus === "idle" || updateStatus === "uptodate" || updateStatus === "error") && (
-                    <button type="button" onClick={doCheckUpdate}
-                      className="motion-press h-9 px-4 text-[13px] border border-border rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/40 flex items-center gap-1.5">
-                      <PiArrowsClockwiseDuotone className="text-base" />
-                      Check for updates
-                    </button>
-                  )}
-                </section>
+                    )}
+                  </div>
+                </div>
 
               </div>
             </main>
@@ -1497,22 +1594,22 @@ export default function App() {
       )}
 
       {appAccess === false && (
-        <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-background/95 backdrop-blur-sm">
-          <div className="rounded-xl border border-border bg-card/40 px-6 py-8 text-center max-w-sm space-y-5">
-            <div className="space-y-1">
-              <p className="text-lg font-semibold">Access required</p>
-              <p className="text-sm text-muted-foreground leading-relaxed">
+        <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black/80 backdrop-blur-md">
+          <div className="rounded-[28px] border border-white/[0.06] bg-white/[0.025] p-7 text-center max-w-sm space-y-5 shadow-2xl">
+            <div className="space-y-2">
+              <p className="text-lg font-medium text-white">Access required</p>
+              <p className="text-sm text-white/40 leading-relaxed">
                 You must be logged in with an active subscription to use xype.
               </p>
               {accessError && (
-                <p className="text-[11px] text-destructive/80 font-mono break-all bg-destructive/5 rounded-md px-2 py-1.5">
+                <p className="text-[11px] text-destructive font-mono break-all bg-destructive/10 rounded-xl px-3 py-2 border border-destructive/20">
                   {accessError}
                 </p>
               )}
             </div>
             <div className="flex gap-3 justify-center">
               <button type="button" onClick={() => openUrl("https://xype.gg/login")}
-                className="motion-press h-9 px-4 text-[13px] rounded-lg bg-foreground text-background hover:bg-foreground/90"
+                className="h-11 rounded-2xl bg-white px-5 text-sm font-medium text-black transition-colors hover:bg-white/90"
               >
                 Log in
               </button>
@@ -1523,7 +1620,7 @@ export default function App() {
                   setAccessError(res.error || "");
                 } catch { setAppAccess(false); setAccessError("Check failed"); }
               }}
-                className="motion-press h-9 px-4 text-[13px] border border-border rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/40"
+                className="h-11 rounded-2xl border border-white/[0.06] bg-white/[0.025] px-5 text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white"
               >
                 Retry
               </button>
@@ -1539,13 +1636,13 @@ export default function App() {
 function FfmpegWarning({ onClick }: { onClick: () => void }) {
   return (
     <button type="button" onClick={onClick}
-      className="motion-press anim-slide-down shrink-0 w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg border border-border bg-accent/30 text-left group hover:bg-accent/45">
-      <span className="text-muted-foreground">
+      className="anim-slide-down shrink-0 w-full flex items-center gap-3 px-4 py-3 rounded-2xl border border-white/[0.06] bg-white/[0.02] text-left group hover:bg-white/[0.04] transition-colors duration-200">
+      <span className="text-white/30">
         <PiWarningCircleDuotone className="text-base shrink-0" />
       </span>
-      <span className="text-[13px] text-muted-foreground">
+      <span className="text-[13px] text-white/60">
         FFmpeg not configured —{" "}
-        <span className="text-foreground font-medium group-hover:underline underline-offset-4">open Settings</span>
+        <span className="text-white font-medium group-hover:underline underline-offset-4">open Settings</span>
       </span>
     </button>
   );
@@ -1554,7 +1651,7 @@ function FfmpegWarning({ onClick }: { onClick: () => void }) {
 // ── Result banner ──
 function ResultBanner({ result }: { result: ProcessResult }) {
   return (
-    <div className={cn("anim-slide-up rounded-lg border px-3 py-2.5 text-[13px]",
+    <div className={cn("anim-slide-up rounded-2xl border px-4 py-3 text-[13px] transition-all",
       result.success
         ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-400"
         : "border-destructive/20 bg-destructive/5 text-destructive")}>
@@ -1577,27 +1674,27 @@ function ExportSuccessModal({ data, onClose, onReveal }: {
   const videoSrc = isVideo ? convertFileSrc(data.outputPath) : null;
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 anim-fade"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md anim-fade"
       onClick={onClose}
     >
       <div
-        className="anim-scale-in bg-card border border-border rounded-xl p-5 w-[420px] shadow-lg space-y-4 max-h-[90vh] overflow-y-auto"
+        className="anim-scale-in bg-black border border-white/[0.06] rounded-[28px] p-6 w-[420px] shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-start gap-3.5">
-          <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center shrink-0">
+          <div className="w-8 h-8 rounded-xl bg-emerald-500/10 flex items-center justify-center shrink-0">
             <PiCheckCircleFill className="text-emerald-400 text-lg" />
           </div>
           <div className="flex-1 min-w-0 pt-0.5">
-            <p className="text-sm font-semibold">{data.message}</p>
-            <p className="text-[11px] font-mono text-muted-foreground/50 mt-1.5 truncate" title={data.outputPath}>
+            <p className="text-sm font-medium text-white">{data.message}</p>
+            <p className="text-[11px] font-mono text-white/30 mt-1.5 truncate" title={data.outputPath}>
               {fileName}
             </p>
           </div>
         </div>
 
         {videoSrc && (
-          <div className="rounded-lg overflow-hidden border border-border bg-black/50">
+          <div className="rounded-[20px] overflow-hidden border border-white/[0.06] bg-black">
             <video
               src={videoSrc}
               controls
@@ -1611,14 +1708,14 @@ function ExportSuccessModal({ data, onClose, onReveal }: {
           <button
             type="button"
             onClick={onReveal}
-            className="motion-press flex-1 h-9 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-accent/50"
+            className="flex-1 h-11 rounded-2xl border border-white/[0.06] bg-white/[0.025] px-5 text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white"
           >
             Open Location
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="motion-press flex-1 h-9 rounded-lg bg-foreground text-background text-sm font-medium hover:bg-foreground/90"
+            className="flex-1 h-11 rounded-2xl bg-white px-5 text-sm font-medium text-black transition-colors hover:bg-white/90"
           >
             OK
           </button>
@@ -1628,30 +1725,46 @@ function ExportSuccessModal({ data, onClose, onReveal }: {
   );
 }
 
-// ── Drop zone — flex-1 so it fills its parent ──
-function DropZone({ isDragOver, onClick, label, hint }: {
-  isDragOver: boolean; onClick: () => void; label: string; hint: string;
+// ── DropZone ──
+function DropZone({
+  isDragOver,
+  onClick,
+  label,
+  hint,
+}: {
+  isDragOver: boolean
+  onClick: () => void
+  label: string
+  hint: string
 }) {
   return (
-    <div onClick={onClick} className={cn(
-      "motion-lift anim-scale-in group relative flex-1 w-full rounded-xl border border-dashed cursor-pointer min-h-[220px] overflow-hidden",
-      "flex flex-col items-center justify-center gap-4",
-      isDragOver
-        ? "border-foreground/30 bg-accent/50"
-        : "border-border bg-card/25 hover:bg-card/45 hover:border-border/80"
-    )}>
-      <div className={cn(
-        "relative w-11 h-11 rounded-lg flex items-center justify-center motion-smooth transition-colors",
-        isDragOver ? "bg-accent text-foreground" : "bg-accent/50 text-muted-foreground group-hover:text-foreground"
-      )}>
-        <PiFilmSlateDuotone className="text-xl transition-colors duration-150" />
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'group relative flex min-h-[360px] w-full flex-1 flex-col items-center justify-center overflow-hidden rounded-[32px] border transition-all duration-300',
+        isDragOver
+          ? 'border-white/[0.12] bg-white/[0.05]'
+          : 'border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.03]'
+      )}
+    >
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.04),transparent_60%)] opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+
+      <div className="relative flex h-16 w-16 items-center justify-center rounded-[22px] border border-white/[0.06] bg-white/[0.03]">
+        <PiFilmSlateDuotone className="text-[28px] text-white/70" />
       </div>
-      <div className="relative text-center space-y-1">
-        <p className="text-[15px] font-medium tracking-tight">{isDragOver ? "Release to load" : label}</p>
-        <p className="text-sm text-muted-foreground max-w-[34ch] leading-relaxed">{hint}</p>
+
+      <div className="relative mt-8 text-center">
+        <p className="text-[17px] font-medium tracking-[-0.03em] text-white">
+          {isDragOver ? 'Release to load' : label}
+        </p>
+
+        <p className="mt-3 max-w-[34ch] text-sm leading-7 text-white/35">
+          {hint}
+        </p>
       </div>
-    </div>
-  );
+    </button>
+  )
 }
 
 // ── Multi-segment timeline with smooth drag ──
@@ -1699,17 +1812,17 @@ function Timeline({ duration, currentTime, segments, pendingIn, videoRef }: {
     <div
       ref={barRef}
       onMouseDown={onMouseDown}
-      className="relative h-11 rounded-xl overflow-visible cursor-pointer"
+      className="relative h-11 rounded-2xl overflow-visible cursor-pointer"
       style={{ userSelect: "none" }}
     >
-      <div className="absolute inset-0 rounded-xl bg-accent/20" />
+      <div className="absolute inset-0 rounded-2xl bg-white/[0.04] border border-white/[0.06]" />
 
       {segments.map((seg) => {
         const inPct = duration > 0 ? (seg.inPoint / duration) * 100 : 0;
         const outPct = duration > 0 ? (seg.outPoint / duration) * 100 : 100;
         return (
           <div key={seg.id}
-            className="absolute inset-y-0 bg-foreground/12 border-x-2 border-foreground/25 rounded-sm"
+            className="absolute inset-y-0 bg-white/10 border-x-2 border-white/30 rounded-sm"
             style={{ left: `${inPct}%`, width: `${outPct - inPct}%` }}
           />
         );
@@ -1726,55 +1839,81 @@ function Timeline({ duration, currentTime, segments, pendingIn, videoRef }: {
       {/* Playhead — slightly wider grab target */}
       <div className="absolute inset-y-0 flex items-center justify-center pointer-events-none"
         style={{ left: pct(currentTime), transform: "translateX(-50%)", width: "12px" }}>
-        <div className="w-px h-full bg-foreground/60" />
-        <div className="absolute top-0 w-2.5 h-2.5 rounded-full bg-foreground border-2 border-background"
+        <div className="w-px h-full bg-white/60" />
+        <div className="absolute top-0 w-2.5 h-2.5 rounded-full bg-white border-2 border-black"
           style={{ transform: "translateY(-30%)" }} />
       </div>
     </div>
   );
 }
 
-function Header({ icon, title, sub }: { icon: React.ReactNode; title: string; sub?: string }) {
-  return (
-    <header className="h-14 px-5 flex items-center gap-2.5 border-b border-border shrink-0 bg-background">
-      <span className="text-muted-foreground text-base">{icon}</span>
-      <span className="text-[13px] font-medium tracking-tight">{title}</span>
-      {sub && (
-        <>
-          <span className="text-muted-foreground/25 text-sm">/</span>
-          <span className="text-sm text-muted-foreground">{sub}</span>
-        </>
-      )}
-    </header>
-  );
-}
-
-function SidebarItem({ active, collapsed = false, disabled = false, tooltip, onClick, icon, children }: {
-  active: boolean; collapsed?: boolean; disabled?: boolean; tooltip?: string; onClick: () => void; icon: React.ReactNode; children: React.ReactNode;
+// ── Header ──
+function Header({
+  icon,
+  title,
+  sub,
+}: {
+  icon: React.ReactNode
+  title: string
+  sub?: string
 }) {
   return (
-    <button type="button" onClick={disabled ? undefined : onClick} aria-disabled={disabled}
-      title={tooltip ?? (collapsed && typeof children === "string" ? children : undefined)}
+    <header className="flex h-16 shrink-0 items-center justify-between border-b border-white/[0.06] bg-white/[0.02] px-7 backdrop-blur-xl">
+      <div className="flex items-center gap-3">
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/[0.06] bg-white/[0.03] text-white/70">
+          {icon}
+        </div>
+
+        <div>
+          <p className="text-[15px] font-medium tracking-[-0.02em] text-white">
+            {title}
+          </p>
+
+          {sub && (
+            <p className="mt-0.5 text-[12px] text-white/30">
+              {sub}
+            </p>
+          )}
+        </div>
+      </div>
+    </header>
+  )
+}
+
+// ── SidebarItem ──
+function SidebarItem({
+  active,
+  collapsed = false,
+  onClick,
+  icon,
+  children,
+}: {
+  active: boolean
+  collapsed?: boolean
+  onClick: () => void
+  icon: React.ReactNode
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
       className={cn(
-        "group relative w-full overflow-hidden rounded-md text-[13px] outline-none transition-colors duration-150",
-        collapsed ? "h-9 px-0" : "h-8 px-2.5",
-        disabled ? "cursor-not-allowed text-muted-foreground/35" : active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
-      )}>
-      <span className={cn(
-        "absolute inset-0 rounded-md transition-opacity duration-150",
-        disabled ? "bg-accent opacity-0" : active ? "bg-accent opacity-100" : "bg-accent opacity-0 group-hover:opacity-55"
-      )} />
-      <span className={cn(
-        "absolute left-0.5 top-1/2 h-4 w-px -translate-y-1/2 rounded-full bg-foreground transition-opacity duration-150",
-        active ? "opacity-70" : "opacity-0"
-      )} />
-      <span className={cn("relative flex h-full items-center", collapsed ? "justify-center" : "gap-2.5")}>
-        <span className={cn(
-          "grid size-5 place-items-center text-base shrink-0 transition-colors duration-150",
-          disabled ? "text-muted-foreground/35" : active ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"
-        )}>{icon}</span>
-        {!collapsed && <span className="truncate">{children}</span>}
+        'group relative flex h-11 w-full items-center rounded-2xl px-3 transition-all duration-200',
+        active
+          ? 'bg-white/[0.06] text-white'
+          : 'text-white/35 hover:bg-white/[0.03] hover:text-white/80'
+      )}
+    >
+      <span className="grid h-5 w-5 place-items-center text-[18px]">
+        {icon}
       </span>
+
+      {!collapsed && (
+        <span className="ml-3 text-[14px] font-medium tracking-[-0.01em] flex-1 flex items-center justify-between">
+          {children}
+        </span>
+      )}
     </button>
-  );
+  )
 }
