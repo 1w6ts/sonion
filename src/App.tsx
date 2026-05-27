@@ -55,7 +55,7 @@ export default function App() {
   const [ffmpegValid, setFfmpegValid] = useState<boolean | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [appVersion, setAppVersion] = useState("");
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed] = useState(false);
   const [authSession, setAuthSession] = useState<PublicAuthSession | null>(null);
   const [appAccess, setAppAccess] = useState<boolean | null>(null);
   const [accessError, setAccessError] = useState<string>("");
