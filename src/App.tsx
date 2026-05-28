@@ -8,6 +8,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { check as checkUpdate, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { cn } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { SiDiscord } from "react-icons/si";
 import {
   PiFilmSlateDuotone,
@@ -30,12 +31,16 @@ import {
 interface ProcessResult { success: boolean; message: string; output_path?: string; }
 interface PublicAuthSession { user_id: string; email: string; expires_at: string; }
 interface Seg { id: string; inPoint: number; outPoint: number; }
-type View = "clean" | "trim" | "render" | "discord" | "settings";
+type View = "clean" | "trim" | "render" | "discord" | "compress" | "settings";
+type CompressEncoder = "libx264" | "libx265" | "h264_nvenc";
+type CompressResolution = "source" | "1080" | "720" | "480";
+type CompressPreset = "medium" | "slow" | "slower";
 
 const VIDEO_EXTS = ["mp4", "mov", "mkv", "avi", "webm", "m4v"];
 
 const VIEW_META: Record<View, { title: string; sub?: string; icon: React.ReactNode }> = {
   discord: { title: "Discord Compress", sub: "8 MB Target", icon: <SiDiscord /> },
+  compress: { title: "Quality Compress", sub: "HandBrake-style", icon: <PiFilmSlateDuotone /> },
   clean: { title: "TikTok Optimizer", sub: "Metadata Patch", icon: <PiSparkleDuotone /> },
   trim: { title: "Trim", sub: "Lossless Cut", icon: <PiScissorsDuotone /> },
   render: { title: "Motion Blur", sub: "Frame Blending", icon: <PiFilmReelDuotone /> },
@@ -95,6 +100,25 @@ export default function App() {
   const [discordProcessing, setDiscordProcessing] = useState(false);
   const [discordProgress, setDiscordProgress] = useState<number | null>(null);
   const [discordResult, setDiscordResult] = useState<ProcessResult | null>(null);
+
+  // Quality compressor state
+  const [compressFile, setCompressFile] = useState("");
+  const [compressProcessing, setCompressProcessing] = useState(false);
+  const [compressProgress, setCompressProgress] = useState<number | null>(null);
+  const [compressResult, setCompressResult] = useState<ProcessResult | null>(null);
+  const [compressEncoder, setCompressEncoderState] = useState<CompressEncoder>(() => (localStorage.getItem("compress.encoder") as CompressEncoder) || "libx264");
+  const [compressQuality, setCompressQualityState] = useState(() => Number(localStorage.getItem("compress.quality") ?? "20"));
+  const [compressPreset, setCompressPresetState] = useState<CompressPreset>(() => (localStorage.getItem("compress.preset") as CompressPreset) || "slow");
+  const [compressResolution, setCompressResolutionState] = useState<CompressResolution>(() => (localStorage.getItem("compress.resolution") as CompressResolution) || "1080");
+  const [compressFps, setCompressFpsState] = useState(() => Number(localStorage.getItem("compress.fps") ?? "30"));
+  const [compressAudioKbps, setCompressAudioKbpsState] = useState(() => Number(localStorage.getItem("compress.audioKbps") ?? "128"));
+
+  const setCompressEncoder = (v: CompressEncoder) => { setCompressEncoderState(v); localStorage.setItem("compress.encoder", v); };
+  const setCompressQuality = (v: number) => { setCompressQualityState(v); localStorage.setItem("compress.quality", String(v)); };
+  const setCompressPreset = (v: CompressPreset) => { setCompressPresetState(v); localStorage.setItem("compress.preset", v); };
+  const setCompressResolution = (v: CompressResolution) => { setCompressResolutionState(v); localStorage.setItem("compress.resolution", v); };
+  const setCompressFps = (v: number) => { setCompressFpsState(v); localStorage.setItem("compress.fps", String(v)); };
+  const setCompressAudioKbps = (v: number) => { setCompressAudioKbpsState(v); localStorage.setItem("compress.audioKbps", String(v)); };
 
   // ── Motion Blur state ──
   const [renderFile, setRenderFile] = useState("");
@@ -564,16 +588,64 @@ export default function App() {
     }
   };
 
+  const handleCompressFile = (path: string) => {
+    setCompressFile(path);
+    setCompressResult(null);
+    setCompressProgress(null);
+  };
+
+  const pickCompressVideo = async () => {
+    try {
+      const sel = await open({ multiple: false, filters: [{ name: "Video", extensions: VIDEO_EXTS }] });
+      if (typeof sel === "string") handleCompressFile(sel);
+    } catch (e) { console.error(e); }
+  };
+
+  const compressVideo = async () => {
+    if (!ffmpegPath || !compressFile) return;
+    setCompressProcessing(true);
+    setCompressResult(null);
+    setCompressProgress(0);
+    const unlisten = await listen<number>("compress-progress", (e) => {
+      setCompressProgress(e.payload);
+    });
+    try {
+      const res = await invoke<ProcessResult>("compress_video", {
+        ffmpegPath,
+        inputPath: compressFile,
+        encoder: compressEncoder,
+        quality: compressQuality,
+        preset: compressPreset,
+        resolution: compressResolution,
+        fps: compressFps,
+        audioKbps: compressAudioKbps,
+      });
+      if (res.success && res.output_path) {
+        setSuccessModal({ message: res.message, outputPath: res.output_path });
+      } else {
+        setCompressResult(res);
+      }
+    } catch (e) {
+      setCompressResult({ success: false, message: `Error: ${e}` });
+    } finally {
+      unlisten();
+      setCompressProcessing(false);
+      setCompressProgress(null);
+    }
+  };
+
   if (view === "trim") {
     handleFileRef.current = handleTrimFile;
   } else if (view === "render") {
     handleFileRef.current = handleRenderFile;
   } else if (view === "clean") {
     handleFileRef.current = handleCleanFile;
+  } else if (view === "compress") {
+    handleFileRef.current = handleCompressFile;
   } else if (view === "discord") {
     handleFileRef.current = handleDiscordFile;
   } else {
-    handleFileRef.current = handleDiscordFile;
+    handleFileRef.current = handleCompressFile;
   }
 
   const [successModal, setSuccessModal] = useState<{ message: string; outputPath: string } | null>(null);
@@ -586,6 +658,7 @@ export default function App() {
   const canRender = !!ffmpegValid && !!renderFile && renderInputFps !== null && !renderProcessing && motionRuntimeInstalled === true;
   const canClean = !!cleanFile && !cleanProcessing;
   const canDiscord = !!ffmpegValid && !!discordFile && !discordProcessing;
+  const canCompress = !!ffmpegValid && !!compressFile && !compressProcessing;
   const recommendedInterpolateFps = renderInputFps !== null
     ? Math.max(renderOutputFps, Math.round(renderInputFps * 5))
     : 360;
@@ -593,6 +666,7 @@ export default function App() {
   const cleanFileName = cleanFile.split(/[\\/]/).pop() ?? "";
   const renderFileName = renderFile.split(/[\\/]/).pop() ?? "";
   const discordFileName = discordFile.split(/[\\/]/).pop() ?? "";
+  const compressFileName = compressFile.split(/[\\/]/).pop() ?? "";
   const trimTotalLen = trimSegs.reduce((acc, s) => acc + (s.outPoint - s.inPoint), 0);
   const renderWorkingFps = interpolateOn && interpolateFpsValue > 0 ? interpolateFpsValue : (renderInputFps ?? renderOutputFps);
   const renderFramesBlended = Math.max(1, Math.round(renderWorkingFps / renderOutputFps * blurAmount));
@@ -657,9 +731,20 @@ export default function App() {
 
             <SidebarItem
               collapsed={sidebarCollapsed}
+              active={view === 'compress'}
+              onClick={() => navigate('compress')}
+              icon={<PiFilmSlateDuotone />}
+            >
+              Quality Compress
+            </SidebarItem>
+
+            <SidebarItem
+              collapsed={sidebarCollapsed}
               active={view === 'clean'}
               onClick={() => navigate('clean')}
               icon={<PiSparkleDuotone />}
+              disabled
+              tooltip="Currently patched. We're looking for a fix."
             >
               TikTok Optimizer
             </SidebarItem>
@@ -1333,6 +1418,237 @@ export default function App() {
           </>
         )}
 
+        {/* Quality Compress */}
+        {view === "compress" && (
+          <>
+            <Header {...VIEW_META.compress} />
+
+            {!compressFile && (
+              <main className="flex-1 flex flex-col overflow-auto">
+                <div className="flex-1 flex flex-col gap-4 p-8">
+                  {!ffmpegValid && <FfmpegWarning onClick={() => setView("settings")} />}
+                  <DropZone key="empty" isDragOver={isDragOver} onClick={pickCompressVideo}
+                    label="Drop video here" hint="or click to browse - MP4, MOV, MKV, AVI..." />
+                </div>
+              </main>
+            )}
+
+            {!!compressFile && (
+              <main className="flex-1 overflow-auto">
+                <div key="filled" className="min-h-full flex flex-col p-8 gap-8">
+                  <div className="anim-slide-up flex items-center gap-4 rounded-[24px] border border-white/[0.06] bg-white/[0.025] p-4">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/[0.06] bg-white/[0.03]">
+                      <PiFilmSlateDuotone className="text-[20px] text-white/60" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[14px] font-medium text-white">{compressFileName}</p>
+                      <p className="mt-1 text-sm text-white/30">Ready to compress</p>
+                    </div>
+                    <button type="button"
+                      onClick={() => { setCompressFile(""); setCompressResult(null); setCompressProgress(null); }}
+                      className="text-white/30 hover:text-white/80 shrink-0 transition-colors duration-150">
+                      <PiXCircleFill className="text-xl" />
+                    </button>
+                  </div>
+
+                  <div className="anim-slide-up rounded-[28px] border border-white/[0.06] bg-white/[0.025] p-5 space-y-1.5" style={{ animationDelay: "40ms" }}>
+                    <p className="text-[12px] font-medium text-white/30">What happens</p>
+                    <p className="text-[13px] text-white/60 leading-relaxed">
+                      Re-encodes with constant quality, similar to HandBrake RF. Lower numbers keep more detail, higher numbers make smaller files.
+                      The default is tuned for TikTok-style uploads: clean 1080p H.264, capped to 30 fps, with web-ready metadata.
+                    </p>
+                  </div>
+
+                  <div className="anim-slide-up space-y-3" style={{ animationDelay: "70ms" }}>
+                    <p className="text-[12px] font-medium text-white/30">Preset</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { label: "Balanced", hint: "TikTok default", quality: 20, res: "1080" as CompressResolution, fps: 30, audio: 128 },
+                        { label: "Smaller", hint: "more savings", quality: 24, res: "720" as CompressResolution, fps: 30, audio: 96 },
+                        { label: "Archive", hint: "best detail", quality: 18, res: "source" as CompressResolution, fps: 0, audio: 160 },
+                      ].map((preset) => (
+                        <button key={preset.label} type="button"
+                          onClick={() => {
+                            setCompressQuality(preset.quality);
+                            setCompressResolution(preset.res);
+                            setCompressFps(preset.fps);
+                            setCompressAudioKbps(preset.audio);
+                            setCompressEncoder("libx264");
+                            setCompressPreset("slow");
+                          }}
+                          className="h-14 rounded-2xl border border-white/[0.06] bg-white/[0.02] text-white/40 transition-colors hover:bg-white/[0.04] hover:text-white/80">
+                          <span className="block text-[12px] font-semibold">{preset.label}</span>
+                          <span className="mt-1 block text-[10px] opacity-50">{preset.hint}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="anim-slide-up grid grid-cols-1 gap-5 lg:grid-cols-2" style={{ animationDelay: "100ms" }}>
+                    <div className="space-y-3">
+                      <div className="flex items-baseline justify-between">
+                        <p className="text-[12px] font-medium text-white/30">Quality</p>
+                        <p className="text-[12px] text-white/30 tabular-nums">RF/CRF {compressQuality}</p>
+                      </div>
+                      <div className="flex gap-2">
+                        {[18, 20, 22, 24].map((value) => (
+                          <button key={value} type="button" onClick={() => setCompressQuality(value)}
+                            className={cn(
+                              "flex-1 h-10 rounded-2xl border text-sm font-medium transition-colors",
+                              compressQuality === value
+                                ? "bg-white text-black border-white"
+                                : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
+                            )}>
+                            {value}
+                          </button>
+                        ))}
+                        <input
+                          type="number" min="10" max="32"
+                          value={compressQuality}
+                          onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 10 && v <= 32) setCompressQuality(v); }}
+                          className="w-16 h-10 px-2 text-center font-mono text-[13px] bg-transparent border border-white/[0.06] rounded-2xl outline-none text-white placeholder:text-white/20 focus:border-white/20 tabular-nums"
+                        />
+                      </div>
+                      <p className="text-[11px] text-white/30">18 is very clean, 20 is a good default, 24 is visibly smaller.</p>
+                    </div>
+
+                    <div className="space-y-3">
+                      <p className="text-[12px] font-medium text-white/30">Encoder</p>
+                      <div className="grid grid-cols-3 gap-2">
+                        {[
+                          { label: "H.264", id: "libx264" as CompressEncoder },
+                          { label: "H.265", id: "libx265" as CompressEncoder },
+                          { label: "NVENC", id: "h264_nvenc" as CompressEncoder },
+                        ].map(({ label, id }) => (
+                          <button key={id} type="button" onClick={() => setCompressEncoder(id)}
+                            className={cn(
+                              "h-10 rounded-2xl border text-sm font-medium transition-colors",
+                              compressEncoder === id
+                                ? "bg-white text-black border-white"
+                                : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
+                            )}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <p className="text-[12px] font-medium text-white/30">Resolution cap</p>
+                      <div className="grid grid-cols-4 gap-2">
+                        {[
+                          { label: "Source", id: "source" as CompressResolution },
+                          { label: "1080p", id: "1080" as CompressResolution },
+                          { label: "720p", id: "720" as CompressResolution },
+                          { label: "480p", id: "480" as CompressResolution },
+                        ].map(({ label, id }) => (
+                          <button key={id} type="button" onClick={() => setCompressResolution(id)}
+                            className={cn(
+                              "h-10 rounded-2xl border text-sm font-medium transition-colors",
+                              compressResolution === id
+                                ? "bg-white text-black border-white"
+                                : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
+                            )}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <p className="text-[12px] font-medium text-white/30">FPS cap</p>
+                      <div className="flex gap-2">
+                        {[0, 30, 60].map((fps) => (
+                          <button key={fps} type="button" onClick={() => setCompressFps(fps)}
+                            className={cn(
+                              "flex-1 h-10 rounded-2xl border text-sm font-medium transition-colors",
+                              compressFps === fps
+                                ? "bg-white text-black border-white"
+                                : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
+                            )}>
+                            {fps === 0 ? "Source" : fps}
+                          </button>
+                        ))}
+                        <input
+                          type="number" min="0" max="240"
+                          value={compressFps}
+                          onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 0 && v <= 240) setCompressFps(v); }}
+                          className="w-16 h-10 px-2 text-center font-mono text-[13px] bg-transparent border border-white/[0.06] rounded-2xl outline-none text-white placeholder:text-white/20 focus:border-white/20 tabular-nums"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <p className="text-[12px] font-medium text-white/30">Preset</p>
+                      <div className="grid grid-cols-3 gap-2">
+                        {(["medium", "slow", "slower"] as CompressPreset[]).map((preset) => (
+                          <button key={preset} type="button" onClick={() => setCompressPreset(preset)}
+                            className={cn(
+                              "h-10 rounded-2xl border text-sm font-medium capitalize transition-colors",
+                              compressPreset === preset
+                                ? "bg-white text-black border-white"
+                                : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
+                            )}>
+                            {preset}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <p className="text-[12px] font-medium text-white/30">Audio</p>
+                      <div className="grid grid-cols-4 gap-2">
+                        {[96, 128, 160, 192].map((kbps) => (
+                          <button key={kbps} type="button" onClick={() => setCompressAudioKbps(kbps)}
+                            className={cn(
+                              "h-10 rounded-2xl border text-sm font-medium transition-colors",
+                              compressAudioKbps === kbps
+                                ? "bg-white text-black border-white"
+                                : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
+                            )}>
+                            {kbps}k
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex-1" />
+
+                  <div className="anim-fade space-y-4" style={{ animationDelay: "140ms" }}>
+                    <div className="border-t border-white/[0.06]" />
+                    {compressProcessing ? (
+                      <div className="space-y-3">
+                        <div className="h-1 overflow-hidden rounded-full bg-white/[0.04]">
+                          <div
+                            className="h-full rounded-full bg-white/40 transition-[width] duration-300"
+                            style={{ width: `${Math.round((compressProgress ?? 0) * 100)}%` }}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between text-[12px] text-white/30 tabular-nums">
+                          <span>{Math.round((compressProgress ?? 0) * 100)}%</span>
+                          <span className="text-[11px] opacity-60">{compressEncoder} - CRF {compressQuality}</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <button type="button" onClick={compressVideo} disabled={!canCompress}
+                        className={cn(
+                          "w-full h-11 rounded-2xl text-sm font-medium transition-colors",
+                          canCompress
+                            ? "bg-white text-black hover:bg-white/90"
+                            : "bg-white/5 text-white/20 cursor-not-allowed"
+                        )}>
+                        Compress
+                      </button>
+                    )}
+                    {compressResult && <ResultBanner result={compressResult} />}
+                  </div>
+                </div>
+              </main>
+            )}
+          </>
+        )}
+
         {/* ─ Discord ─ */}
         {view === "discord" && (
           <>
@@ -1908,20 +2224,27 @@ function SidebarItem({
   onClick,
   icon,
   children,
+  disabled = false,
+  tooltip,
 }: {
   active: boolean
   collapsed?: boolean
   onClick: () => void
   icon: React.ReactNode
   children: React.ReactNode
+  disabled?: boolean
+  tooltip?: string
 }) {
-  return (
+  const button = (
     <button
       type="button"
-      onClick={onClick}
+      onClick={disabled ? undefined : onClick}
+      aria-disabled={disabled}
       className={cn(
         'group relative flex h-11 w-full items-center rounded-2xl px-3 transition-all duration-200',
-        active
+        disabled
+          ? 'cursor-not-allowed text-white/20'
+          : active
           ? 'bg-white/[0.06] text-white'
           : 'text-white/35 hover:bg-white/[0.03] hover:text-white/80'
       )}
@@ -1936,5 +2259,22 @@ function SidebarItem({
         </span>
       )}
     </button>
+  );
+
+  if (!tooltip) return button;
+
+  return (
+    <TooltipProvider delayDuration={120}>
+      <Tooltip>
+        <TooltipTrigger asChild>{button}</TooltipTrigger>
+        <TooltipContent
+          side="right"
+          sideOffset={10}
+          className="max-w-[220px] rounded-xl border border-white/[0.08] bg-[#111111] px-3 py-2 text-[12px] leading-5 text-white/75 shadow-2xl shadow-black/40"
+        >
+          {tooltip}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   )
 }

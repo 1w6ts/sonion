@@ -73,6 +73,14 @@ pub struct ProcessResult {
     pub output_path: Option<String>,
 }
 
+fn normalize_compress_encoder(encoder: &str) -> (&'static str, &'static str) {
+    match encoder {
+        "libx265" => ("libx265", "-crf"),
+        "h264_nvenc" => ("h264_nvenc", "-cq"),
+        _ => ("libx264", "-crf"),
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct AppConfig {
     pub ffmpeg_path: String,
@@ -1164,6 +1172,149 @@ fn patch_tiktok_optimizer(input_path: String) -> Result<ProcessResult, String> {
 }
 
 #[tauri::command]
+async fn compress_video(
+    app: tauri::AppHandle,
+    ffmpeg_path: String,
+    input_path: String,
+    encoder: String,
+    quality: u32,
+    preset: String,
+    resolution: String,
+    fps: u32,
+    audio_kbps: u32,
+) -> Result<ProcessResult, String> {
+    let input = PathBuf::from(&input_path);
+    let ffmpeg = PathBuf::from(&ffmpeg_path);
+
+    if !input.exists() {
+        return Ok(ProcessResult { success: false, message: "Input file not found".to_string(), output_path: None });
+    }
+    if !ffmpeg.exists() {
+        return Ok(ProcessResult { success: false, message: "FFmpeg not found".to_string(), output_path: None });
+    }
+
+    let duration = probe_duration(&ffmpeg, &input);
+    if duration <= 0.0 {
+        return Ok(ProcessResult { success: false, message: "Could not detect video duration".to_string(), output_path: None });
+    }
+
+    let default_dir = PathBuf::from(".");
+    let input_dir = input.parent().unwrap_or(&default_dir);
+    let input_name = input.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+    let output_path = input_dir.join(format!("{}_compressed.mp4", input_name));
+    if output_path.exists() {
+        let _ = fs::remove_file(&output_path);
+    }
+
+    let (codec, quality_flag) = normalize_compress_encoder(&encoder);
+    let q = quality.clamp(10, 32);
+    let preset = if preset == "medium" || preset == "slow" || preset == "slower" {
+        preset
+    } else {
+        "slow".to_string()
+    };
+    let audio = audio_kbps.clamp(64, 320);
+
+    let mut filters: Vec<String> = Vec::new();
+    match resolution.as_str() {
+        "1080" => filters.push("scale=-2:'min(ih,1080)'".to_string()),
+        "720" => filters.push("scale=-2:'min(ih,720)'".to_string()),
+        "480" => filters.push("scale=-2:'min(ih,480)'".to_string()),
+        _ => {}
+    }
+    if fps > 0 {
+        filters.push(format!("fps={}", fps.min(240)));
+    }
+    filters.push("format=yuv420p".to_string());
+    let filter_str = filters.join(",");
+
+    let mut cmd = ffmpeg_cmd(&ffmpeg);
+    cmd.stdin(Stdio::null())
+        .arg("-y")
+        .arg("-i").arg(&input)
+        .arg("-vf").arg(&filter_str)
+        .arg("-c:v").arg(codec)
+        .arg(quality_flag).arg(q.to_string());
+
+    if codec == "h264_nvenc" {
+        let nvenc_preset = match preset.as_str() {
+            "medium" => "p4",
+            "slower" => "p7",
+            _ => "p6",
+        };
+        cmd.arg("-preset").arg(nvenc_preset);
+    } else {
+        cmd.arg("-preset").arg(&preset);
+    }
+
+    if codec == "libx265" {
+        cmd.arg("-tag:v").arg("hvc1");
+    }
+
+    cmd.arg("-c:a").arg("aac")
+        .arg("-b:a").arg(format!("{}k", audio))
+        .arg("-movflags").arg("+faststart")
+        .arg("-progress").arg("pipe:1")
+        .arg("-nostats")
+        .arg(&output_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+    let stdout = child.stdout.take().ok_or_else(|| "Failed to capture FFmpeg progress".to_string())?;
+    let stderr = child.stderr.take().ok_or_else(|| "Failed to capture FFmpeg errors".to_string())?;
+
+    let app_clone = app.clone();
+    let progress_handle = std::thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().flatten() {
+            let parsed = line
+                .strip_prefix("out_time_us=")
+                .or_else(|| line.strip_prefix("out_time_ms="))
+                .and_then(|value| value.parse::<f64>().ok());
+            if let Some(us) = parsed {
+                if duration > 0.0 {
+                    let pct = (us / 1_000_000.0 / duration).min(1.0);
+                    let _ = app_clone.emit("compress-progress", pct);
+                }
+            }
+        }
+    });
+
+    let stderr_handle = std::thread::spawn(move || {
+        BufReader::new(stderr).lines().flatten().collect::<Vec<_>>().join("\n")
+    });
+
+    let status = child.wait().map_err(|e| e.to_string())?;
+    let _ = progress_handle.join();
+    let stderr_output = stderr_handle.join().unwrap_or_default();
+    let _ = app.emit("compress-progress", 1.0_f64);
+
+    if status.success() && output_path.exists() {
+        let in_size = fs::metadata(&input).map(|m| m.len()).unwrap_or(0);
+        let out_size = fs::metadata(&output_path).map(|m| m.len()).unwrap_or(0);
+        let out_mb = out_size as f64 / (1024.0 * 1024.0);
+        let saved = if in_size > 0 && out_size <= in_size {
+            let pct = 100.0 - (out_size as f64 / in_size as f64 * 100.0);
+            format!(" - saved {:.0}%", pct.max(0.0))
+        } else {
+            "".to_string()
+        };
+        Ok(ProcessResult {
+            success: true,
+            message: format!("Compressed to {:.2} MB{}", out_mb, saved),
+            output_path: output_path.to_str().map(|s| s.to_string()),
+        })
+    } else {
+        Ok(ProcessResult {
+            success: false,
+            message: format!("FFmpeg error: {}", stderr_output),
+            output_path: None,
+        })
+    }
+}
+
+#[tauri::command]
 async fn compress_for_discord(
     app: tauri::AppHandle,
     ffmpeg_path: String,
@@ -1379,6 +1530,7 @@ pub fn run() {
             check_motion_runtime,
             install_motion_runtime,
             patch_tiktok_optimizer,
+            compress_video,
             compress_for_discord,
             reveal_in_explorer,
             get_auth_session,
