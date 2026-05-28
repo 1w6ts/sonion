@@ -149,17 +149,4 @@ out_scale = float(rc["timescale"].get("out", "1.0"))
 if out_scale != 1.0:
     clip = core.std.AssumeFPS(clip, fpsnum=int(clip.fps * out_scale))
 
-# -- Final output --
-clip = core.resize.Bicubic(
-    clip,
-    format=vs.YUV420P8,
-    matrix_in_s="709",
-    transfer_in_s="709",
-    primaries_in_s="709",
-    matrix_s="709",
-    transfer_s="709",
-    primaries_s="709",
-    range_in_s="limited",
-    range_s="limited",
-)
 clip.set_output()

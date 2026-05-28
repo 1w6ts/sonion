@@ -120,8 +120,11 @@ export default function App() {
   });
   const [blendWeighting, setBlendWeightingState] = useState(() => localStorage.getItem("smth.weighting") ?? "equal");
   const [renderEncoder, setRenderEncoderState] = useState(() => localStorage.getItem("smth.encoder") ?? "libx264");
-  const [renderCrf, setRenderCrfState] = useState(() => Number(localStorage.getItem("smth.crf") ?? "17"));
-  const [interpolateOn, setInterpolateOnState] = useState(() => localStorage.getItem("smth.interpolateOn") === "true");
+  const [renderCrf, setRenderCrfState] = useState(() => {
+    const stored = localStorage.getItem("smth.crf");
+    return stored === null || stored === "17" ? 14 : Number(stored);
+  });
+  const [interpolateOn, setInterpolateOnState] = useState(() => localStorage.getItem("smth.interpolateOn") !== "false");
   const [interpolateFpsValue, setInterpolateFpsValueState] = useState(() => Number(localStorage.getItem("smth.interpFps") ?? "360"));
 
   const setRenderOutputFps = (v: number) => { setRenderOutputFpsState(v); localStorage.setItem("smth.outFps", String(v)); };
@@ -426,6 +429,9 @@ export default function App() {
     try {
       const fps = await invoke<number>("get_video_fps", { ffmpegPath, videoPath: path });
       setRenderInputFps(fps);
+      if (localStorage.getItem("smth.interpFps") === null) {
+        setInterpolateFpsValue(Math.max(renderOutputFps, Math.round(fps * 5)));
+      }
     } catch { /* ignore */ } finally {
       setRenderDetecting(false);
     }
@@ -580,6 +586,10 @@ export default function App() {
   const canRender = !!ffmpegValid && !!renderFile && renderInputFps !== null && !renderProcessing && motionRuntimeInstalled === true;
   const canClean = !!cleanFile && !cleanProcessing;
   const canDiscord = !!ffmpegValid && !!discordFile && !discordProcessing;
+  const recommendedInterpolateFps = renderInputFps !== null
+    ? Math.max(renderOutputFps, Math.round(renderInputFps * 5))
+    : 360;
+  const interpolationPresetFps = Array.from(new Set([recommendedInterpolateFps, 360, 480, 960]));
   const cleanFileName = cleanFile.split(/[\\/]/).pop() ?? "";
   const renderFileName = renderFile.split(/[\\/]/).pop() ?? "";
   const discordFileName = discordFile.split(/[\\/]/).pop() ?? "";
@@ -1162,7 +1172,7 @@ export default function App() {
                   <div className="anim-slide-up space-y-3" style={{ animationDelay: "130ms" }}>
                     <div className="flex items-center justify-between">
                       <p className="text-[12px] font-medium text-white/30">Interpolation</p>
-                      <p className="text-[11px] text-white/30">slow — CPU intensive</p>
+                      <p className="text-[11px] text-white/30">SVP-style optical flow</p>
                     </div>
                     <div className="flex items-center gap-2">
                       <button type="button" onClick={() => setInterpolateOn(false)}
@@ -1181,13 +1191,13 @@ export default function App() {
                       </button>
                       {interpolateOn && (
                         <div className="anim-fade ml-2 flex items-center gap-2 flex-1">
-                          {[360, 480, 960].map(fps => (
+                          {interpolationPresetFps.map(fps => (
                             <button key={fps} type="button" onClick={() => setInterpolateFpsValue(fps)}
                               className={cn("h-10 px-3 rounded-2xl border text-sm font-medium transition-colors",
                                 interpolateFpsValue === fps
                                   ? "bg-white text-black border-white"
                                   : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]")}>
-                              {fps}
+                              {fps === recommendedInterpolateFps ? `${fps}*` : fps}
                             </button>
                           ))}
                           <div className="ml-auto flex items-center gap-1.5">
@@ -1243,9 +1253,9 @@ export default function App() {
                         <p className="text-[11px] text-white/30 font-medium">Quality</p>
                         <div className="flex gap-2">
                           {[
-                            { label: "High", crf: 17 },
-                            { label: "Med", crf: 22 },
-                            { label: "Low", crf: 28 },
+                            { label: "High", crf: 14 },
+                            { label: "Med", crf: 18 },
+                            { label: "Low", crf: 24 },
                           ].map(({ label, crf }) => (
                             <button key={crf} type="button" onClick={() => setRenderCrf(crf)}
                               className={cn(
@@ -1418,12 +1428,12 @@ export default function App() {
         {view === "settings" && (
           <>
             <main className="flex-1 overflow-auto">
-              <div className="mx-auto grid w-full max-w-7xl grid-cols-[minmax(0,1fr)_340px] gap-6 p-8">
+              <div className="mx-auto grid w-full max-w-7xl grid-cols-1 gap-5 p-4 sm:p-6 lg:p-8 xl:grid-cols-[minmax(0,1fr)_360px]">
 
                 {/* left */}
                 <div className="space-y-6">
-                  <div className="rounded-[28px] border border-white/[0.06] bg-white/[0.025]">
-                    <div className="border-b border-white/[0.06] px-7 py-6">
+                  <div className="rounded-[24px] border border-white/[0.06] bg-white/[0.025]">
+                    <div className="border-b border-white/[0.06] px-5 py-5 sm:px-7 sm:py-6">
                       <p className="text-[15px] font-medium text-white">
                         FFmpeg executable
                       </p>
@@ -1433,29 +1443,32 @@ export default function App() {
                       </p>
                     </div>
 
-                    <div className="p-7">
-                      <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
+                    <div className="p-5 sm:p-7">
+                      <div className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
                         <input type="text" value={ffmpegPath} onChange={e => saveFfmpegPath(e.target.value)}
                           placeholder="C:\path\to\ffmpeg.exe" spellCheck={false}
                           className={cn("h-11 min-w-0 rounded-2xl border bg-white/[0.02] border-white/[0.06] px-4 font-mono text-[13px] text-white outline-none placeholder:text-white/20 transition-colors focus:border-white/20",
                             ffmpegValid === false ? "border-destructive/50" : "border-white/[0.06]")} />
                         <button type="button" onClick={pickFfmpeg}
-                          className="h-11 px-5 rounded-2xl border border-white/[0.06] bg-white/[0.025] text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white flex items-center gap-1.5 shrink-0">
+                          className="flex h-11 items-center justify-center gap-1.5 rounded-2xl border border-white/[0.06] bg-white/[0.025] px-5 text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white sm:justify-start">
                           <PiFolderOpenDuotone className="text-base" />Browse
                         </button>
-                        <span className="grid size-11 place-items-center">
+                        <span className="hidden size-11 place-items-center sm:grid">
                           {ffmpegValid === true && <PiCheckCircleFill className="anim-pop text-emerald-500 text-lg shrink-0" />}
                           {ffmpegValid === false && <PiXCircleFill className="anim-scale-in text-destructive text-lg shrink-0" />}
                         </span>
                       </div>
+                      {ffmpegValid === true && (
+                        <p className="anim-slide-down mt-2 text-[12px] text-emerald-400 sm:hidden">FFmpeg is configured.</p>
+                      )}
                       {ffmpegValid === false && (
                         <p className="anim-slide-down text-[12px] text-destructive mt-2">Not a valid ffmpeg executable.</p>
                       )}
                     </div>
                   </div>
 
-                  <div className="rounded-[28px] border border-white/[0.06] bg-white/[0.025]">
-                    <div className="border-b border-white/[0.06] px-7 py-6">
+                  <div className="rounded-[24px] border border-white/[0.06] bg-white/[0.025]">
+                    <div className="border-b border-white/[0.06] px-5 py-5 sm:px-7 sm:py-6">
                       <p className="text-[15px] font-medium text-white">
                         Account
                       </p>
@@ -1465,23 +1478,31 @@ export default function App() {
                       </p>
                     </div>
 
-                    <div className="p-7 space-y-4">
+                    <div className="p-5 sm:p-7">
                       {authSession ? (
-                        <>
-                          <div className="rounded-[20px] border border-emerald-500/20 bg-emerald-500/5 px-5 py-4">
-                            <p className="text-[14px] font-medium text-emerald-400">Logged in</p>
-                            <p className="mt-1 text-sm text-white/60">{authSession.email}</p>
-                            <p className="mt-1 text-[12px] font-mono text-white/30 truncate">{authSession.user_id}</p>
+                        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <PiCheckCircleFill className="text-emerald-400 shrink-0" />
+                              <p className="text-[14px] font-medium text-white">Signed in</p>
+                            </div>
+                            <p className="mt-1 truncate text-sm text-white/45">{authSession.email}</p>
                           </div>
                           <button type="button" onClick={logoutAuth}
-                            className="h-11 rounded-2xl border border-white/[0.06] bg-white/[0.025] px-5 text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white">
+                            className="h-11 shrink-0 rounded-2xl border border-white/[0.06] bg-white/[0.025] px-5 text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white">
                             Log out
                           </button>
-                        </>
+                        </div>
                       ) : (
-                        <div className="rounded-[20px] border border-white/[0.06] bg-white/[0.015] px-5 py-4">
-                          <p className="text-[14px] text-white/60">Not logged in.</p>
-                          <p className="mt-1 text-sm text-white/30">Open a valid auth deep link to sign in.</p>
+                        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <p className="text-[14px] font-medium text-white/70">Not signed in</p>
+                            <p className="mt-1 text-sm text-white/35">Log in to verify your subscription.</p>
+                          </div>
+                          <button type="button" onClick={() => openUrl("https://xype.gg/login")}
+                            className="h-11 shrink-0 rounded-2xl bg-white px-5 text-sm font-medium text-black transition-colors hover:bg-white/90">
+                            Log in
+                          </button>
                         </div>
                       )}
                     </div>
@@ -1490,8 +1511,8 @@ export default function App() {
 
                 {/* right */}
                 <div className="space-y-6">
-                  <div className="rounded-[28px] border border-white/[0.06] bg-white/[0.025] p-6 space-y-4">
-                    <div className="flex items-center justify-between border-b border-white/[0.06] pb-4">
+                  <div className="rounded-[24px] border border-white/[0.06] bg-white/[0.025] p-5 space-y-4 sm:p-6">
+                    <div className="flex items-center justify-between gap-4 border-b border-white/[0.06] pb-4">
                       <div>
                         <p className="text-[15px] font-medium text-white">Updates</p>
                         <p className="mt-0.5 text-[12px] text-white/35">Keep xype up to date</p>
@@ -1563,7 +1584,7 @@ export default function App() {
 
                     {updateStatus === "error" && (
                       <div className="anim-fade rounded-2xl border border-destructive/20 bg-destructive/5 px-4 py-3">
-                        <p className="text-sm text-destructive">{updateError || "Update check failed."}</p>
+                        <p className="text-sm text-destructive">Update check failed. Try again later.</p>
                       </div>
                     )}
 
@@ -1602,8 +1623,8 @@ export default function App() {
                 You must be logged in with an active subscription to use xype.
               </p>
               {accessError && (
-                <p className="text-[11px] text-destructive font-mono break-all bg-destructive/10 rounded-xl px-3 py-2 border border-destructive/20">
-                  {accessError}
+                <p className="text-[12px] text-destructive">
+                  Access check failed. Log in again or retry in a moment.
                 </p>
               )}
             </div>

@@ -118,7 +118,6 @@ fn store_auth_session(session: &AuthSession) -> Result<(), String> {
     }
     let data = serde_json::to_string(session).map_err(|e| e.to_string())?;
     fs::write(&path, data).map_err(|e| e.to_string())?;
-    eprintln!("[auth] stored session to file: {:?}", path);
     Ok(())
 }
 
@@ -128,7 +127,6 @@ fn load_auth_session_inner() -> Result<Option<AuthSession>, String> {
         return Ok(None);
     }
     let data = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    eprintln!("[auth] loaded session from file: {:?}", path);
     serde_json::from_str(&data).map(Some).map_err(|e| e.to_string())
 }
 
@@ -150,18 +148,15 @@ fn flush_pending_auth() -> Result<Option<AuthSession>, String> {
         let _ = fs::remove_file(&path);
         return Ok(None);
     }
-    eprintln!("[auth] found pending auth file, url={}", trimmed);
     let session = parse_auth_callback(trimmed)?;
     store_auth_session(&session)?;
     let _ = fs::remove_file(&path);
-    eprintln!("[auth] flushed pending auth to keyring");
     Ok(Some(session))
 }
 
 fn parse_auth_callback(url: &str) -> Result<AuthSession, String> {
     let parsed = Url::parse(url).map_err(|e| e.to_string())?;
     let path = parsed.path();
-    eprintln!("[auth] received deep link: {} | scheme={} host={:?} path={}", url, parsed.scheme(), parsed.host_str(), path);
     if parsed.scheme() != "xype" || parsed.host_str() != Some("auth") || (path != "/callback" && path != "/callback/") {
         return Err(format!("Ignored non-auth deep link: path={}", path));
     }
@@ -192,9 +187,7 @@ fn parse_auth_callback(url: &str) -> Result<AuthSession, String> {
 fn handle_auth_deep_link(app: &tauri::AppHandle, url: &str) -> Result<(), String> {
     let session = parse_auth_callback(url)?;
     store_auth_session(&session)?;
-    eprintln!("[auth] stored session for user_id={}", session.user_id);
     app.emit("auth-session-updated", PublicAuthSession::from(&session)).map_err(|e| e.to_string())?;
-    eprintln!("[auth] emitted auth-session-updated event");
     Ok(())
 }
 
@@ -795,7 +788,6 @@ async fn render_video_motion_runtime(
     if output_path.exists() { let _ = fs::remove_file(&output_path); }
 
     let interpolation_enabled = interpolate_fps > 0;
-    let flowblur_enabled = frames_to_blend > 1;
     let working_fps = interpolate_fps.max(output_fps).max(1);
     let blur_intensity = ((frames_to_blend as f64 * output_fps as f64) / working_fps as f64).clamp(0.1, 4.0);
     let mut recipe_value = serde_json::json!({
@@ -816,8 +808,8 @@ async fn render_video_motion_runtime(
                 "weighting": blend_weighting
             },
             "flowblur": {
-                "enabled": if flowblur_enabled { "yes" } else { "no" },
-                "amount": "125",
+                "enabled": "no",
+                "amount": "0",
                 "do blending": "after"
             },
             "miscellaneous": {
@@ -862,7 +854,7 @@ async fn render_video_motion_runtime(
     let is_nvenc = encoder == "h264_nvenc";
     let codec = if is_nvenc { "h264_nvenc" } else { "libx264" };
     let quality_flag = if is_nvenc { "-cq" } else { "-crf" };
-    let preset = if is_nvenc { "p4" } else { "fast" };
+    let preset = if is_nvenc { "p5" } else { "slow" };
 
     let audio_filter = if (effective_timescale - 1.0).abs() > 0.001 {
         Some(audio_tempo_filter(effective_timescale))
@@ -1334,16 +1326,13 @@ pub fn run() {
     // Windows deep-link second-instance shortcut: search ALL args for a xype:// URL,
     // write it to a pending-auth file, then exit. The running instance polls the file.
     let args: Vec<String> = std::env::args().collect();
-    eprintln!("[auth] startup args: {:?}", args);
     if let Some(url) = args.iter().map(|a| a.trim_matches('"').trim()).find(|a| a.starts_with("xype://")) {
-        eprintln!("[auth] second-instance caught URL: {}", url);
         if !url.is_empty() {
             if let Ok(path) = pending_auth_file() {
                 if let Some(parent) = path.parent() {
                     let _ = fs::create_dir_all(parent);
                 }
                 let _ = fs::write(&path, url);
-                eprintln!("[auth] wrote pending auth file: {:?}", path);
             }
         }
         std::process::exit(0);
