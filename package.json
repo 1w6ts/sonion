@@ -1,7 +1,7 @@
 {
   "name": "xype",
   "private": true,
-  "version": "0.2.5",
+  "version": "0.2.51",
   "type": "module",
   "scripts": {
     "dev": "vite",
