@@ -1,6 +1,6 @@
 [package]
 name = "xype"
-version = "0.2.53"
+version = "0.3.0"
 description = "video multitool"
 authors = ["venator"]
 edition = "2021"
@@ -34,4 +34,4 @@ tauri-plugin-single-instance = "2"
 keyring = "3"
 url = "2"
 windows-targets = "0.52"
-
+discord-rich-presence = "1.1"

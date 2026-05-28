@@ -1,9 +1,14 @@
+use discord_rich_presence::{
+    activity::{Activity, Button},
+    DiscordIpc, DiscordIpcClient,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::fs;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 use tauri_plugin_deep_link::DeepLinkExt;
 use url::Url;
@@ -13,6 +18,75 @@ use std::os::windows::process::CommandExt;
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const API_BASE: &str = "https://xype.gg"; // set your backend URL, e.g. "https://api.xype.gg"
+const DEFAULT_DISCORD_CLIENT_ID: &str = "1509630550674247700";
+const XYPE_SITE_URL: &str = "https://xype.gg";
+
+#[derive(Default)]
+struct DiscordPresenceState {
+    client: Mutex<Option<DiscordIpcClient>>,
+}
+
+fn discord_client_id() -> Result<String, String> {
+    let Some(raw) = std::env::var("XYPE_DISCORD_CLIENT_ID")
+        .ok()
+        .or_else(|| option_env!("XYPE_DISCORD_CLIENT_ID").map(|value| value.to_string())) else {
+        return Ok(DEFAULT_DISCORD_CLIENT_ID.to_string());
+    };
+
+    raw.parse::<u64>()
+        .map_err(|_| "Discord client ID must be a numeric application ID.".to_string())
+        .and_then(|id| {
+            if id == 0 {
+                Err("Discord client ID is not configured yet.".to_string())
+            } else {
+                Ok(raw)
+            }
+        })
+}
+
+fn discord_presence_activity(client: &mut DiscordIpcClient) -> Result<(), String> {
+    let activity = Activity::new()
+        .details("Making clips upload-ready")
+        .state("Compressing, trimming, and rendering")
+        .buttons(vec![Button::new("Get now", XYPE_SITE_URL)]);
+
+    client
+        .set_activity(activity)
+        .map_err(|e| e.to_string())
+}
+
+fn start_discord_presence(state: &DiscordPresenceState) -> Result<(), String> {
+    let client_id = discord_client_id()?;
+
+    let mut client_slot = state.client.lock().map_err(|e| e.to_string())?;
+    if let Some(client) = client_slot.as_mut() {
+        return discord_presence_activity(client);
+    }
+
+    let mut client = DiscordIpcClient::new(client_id);
+    client.connect().map_err(|e| e.to_string())?;
+    discord_presence_activity(&mut client)?;
+    *client_slot = Some(client);
+    Ok(())
+}
+
+#[tauri::command]
+fn set_discord_presence_enabled(
+    enabled: bool,
+    state: tauri::State<'_, DiscordPresenceState>,
+) -> Result<(), String> {
+    if enabled {
+        start_discord_presence(&state)
+    } else {
+        let mut client_slot = state.client.lock().map_err(|e| e.to_string())?;
+        if let Some(client) = client_slot.as_mut() {
+            let _ = client.clear_activity();
+            let _ = client.close();
+        }
+        *client_slot = None;
+        Ok(())
+    }
+}
 
 fn ffmpeg_cmd(path: &PathBuf) -> Command {
     let mut cmd = Command::new(path);
@@ -34,7 +108,12 @@ fn read_smoothie_recipe(path: String) -> Result<String, String> {
     if !path.exists() {
         return Err("Recipe file not found".to_string());
     }
-    if path.extension().and_then(|s| s.to_str()).map(|s| !s.eq_ignore_ascii_case("ini")).unwrap_or(true) {
+    if path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| !s.eq_ignore_ascii_case("ini"))
+        .unwrap_or(true)
+    {
         return Err("Only Smoothie .ini recipes are supported".to_string());
     }
     fs::read_to_string(path).map_err(|e| e.to_string())
@@ -135,7 +214,9 @@ fn load_auth_session_inner() -> Result<Option<AuthSession>, String> {
         return Ok(None);
     }
     let data = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&data).map(Some).map_err(|e| e.to_string())
+    serde_json::from_str(&data)
+        .map(Some)
+        .map_err(|e| e.to_string())
 }
 
 fn pending_auth_file() -> Result<PathBuf, String> {
@@ -165,7 +246,10 @@ fn flush_pending_auth() -> Result<Option<AuthSession>, String> {
 fn parse_auth_callback(url: &str) -> Result<AuthSession, String> {
     let parsed = Url::parse(url).map_err(|e| e.to_string())?;
     let path = parsed.path();
-    if parsed.scheme() != "xype" || parsed.host_str() != Some("auth") || (path != "/callback" && path != "/callback/") {
+    if parsed.scheme() != "xype"
+        || parsed.host_str() != Some("auth")
+        || (path != "/callback" && path != "/callback/")
+    {
         return Err(format!("Ignored non-auth deep link: path={}", path));
     }
 
@@ -185,17 +269,26 @@ fn parse_auth_callback(url: &str) -> Result<AuthSession, String> {
     }
 
     Ok(AuthSession {
-        token: token.filter(|v| !v.is_empty()).ok_or_else(|| "Auth callback missing token".to_string())?,
-        user_id: user_id.filter(|v| !v.is_empty()).ok_or_else(|| "Auth callback missing user_id".to_string())?,
-        email: email.filter(|v| !v.is_empty()).ok_or_else(|| "Auth callback missing email".to_string())?,
-        expires_at: expires_at.filter(|v| !v.is_empty()).ok_or_else(|| "Auth callback missing expires_at".to_string())?,
+        token: token
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| "Auth callback missing token".to_string())?,
+        user_id: user_id
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| "Auth callback missing user_id".to_string())?,
+        email: email
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| "Auth callback missing email".to_string())?,
+        expires_at: expires_at
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| "Auth callback missing expires_at".to_string())?,
     })
 }
 
 fn handle_auth_deep_link(app: &tauri::AppHandle, url: &str) -> Result<(), String> {
     let session = parse_auth_callback(url)?;
     store_auth_session(&session)?;
-    app.emit("auth-session-updated", PublicAuthSession::from(&session)).map_err(|e| e.to_string())?;
+    app.emit("auth-session-updated", PublicAuthSession::from(&session))
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -380,10 +473,14 @@ fn get_video_fps(ffmpeg_path: &str, video_path: &str) -> Result<f64, String> {
         if ffprobe.exists() {
             if let Ok(output) = ffmpeg_cmd(&ffprobe)
                 .args([
-                    "-v", "0",
-                    "-select_streams", "v:0",
-                    "-show_entries", "stream=avg_frame_rate,r_frame_rate",
-                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    "-v",
+                    "0",
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=avg_frame_rate,r_frame_rate",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
                     video_path,
                 ])
                 .output()
@@ -450,20 +547,31 @@ async fn export_segments(
 
     let default_dir = PathBuf::from(".");
     let input_dir = input.parent().unwrap_or(&default_dir);
-    let input_name = input.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+    let input_name = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("output");
 
     if segments.len() == 1 {
         let seg = &segments[0];
         let output_path = input_dir.join(format!("{}_trim.mp4", input_name));
-        if output_path.exists() { let _ = fs::remove_file(&output_path); }
+        if output_path.exists() {
+            let _ = fs::remove_file(&output_path);
+        }
         let result = ffmpeg_cmd(&ffmpeg)
             .arg("-y")
-            .arg("-ss").arg(seg.start.to_string())
-            .arg("-to").arg(seg.end.to_string())
-            .arg("-i").arg(&input)
-            .arg("-c:v").arg("copy")
-            .arg("-c:a").arg("copy")
-            .arg("-avoid_negative_ts").arg("make_zero")
+            .arg("-ss")
+            .arg(seg.start.to_string())
+            .arg("-to")
+            .arg(seg.end.to_string())
+            .arg("-i")
+            .arg(&input)
+            .arg("-c:v")
+            .arg("copy")
+            .arg("-c:a")
+            .arg("copy")
+            .arg("-avoid_negative_ts")
+            .arg("make_zero")
             .arg(&output_path)
             .output();
         return Ok(match result {
@@ -477,7 +585,11 @@ async fn export_segments(
                 message: format!("FFmpeg error: {}", String::from_utf8_lossy(&out.stderr)),
                 output_path: None,
             },
-            Err(e) => ProcessResult { success: false, message: format!("Failed: {e}"), output_path: None },
+            Err(e) => ProcessResult {
+                success: false,
+                message: format!("Failed: {e}"),
+                output_path: None,
+            },
         });
     }
 
@@ -486,29 +598,47 @@ async fn export_segments(
 
     for (i, seg) in segments.iter().enumerate() {
         let temp_path = temp_dir.join(format!("xype_seg_{i}.mp4"));
-        if temp_path.exists() { let _ = fs::remove_file(&temp_path); }
+        if temp_path.exists() {
+            let _ = fs::remove_file(&temp_path);
+        }
         let result = ffmpeg_cmd(&ffmpeg)
             .arg("-y")
-            .arg("-ss").arg(seg.start.to_string())
-            .arg("-to").arg(seg.end.to_string())
-            .arg("-i").arg(&input)
-            .arg("-c:v").arg("copy")
-            .arg("-c:a").arg("copy")
-            .arg("-avoid_negative_ts").arg("make_zero")
+            .arg("-ss")
+            .arg(seg.start.to_string())
+            .arg("-to")
+            .arg(seg.end.to_string())
+            .arg("-i")
+            .arg(&input)
+            .arg("-c:v")
+            .arg("copy")
+            .arg("-c:a")
+            .arg("copy")
+            .arg("-avoid_negative_ts")
+            .arg("make_zero")
             .arg(&temp_path)
             .output();
         match result {
-            Ok(out) if out.status.success() && temp_path.exists() => { temp_files.push(temp_path); }
+            Ok(out) if out.status.success() && temp_path.exists() => {
+                temp_files.push(temp_path);
+            }
             Ok(out) => {
-                for f in &temp_files { let _ = fs::remove_file(f); }
+                for f in &temp_files {
+                    let _ = fs::remove_file(f);
+                }
                 return Ok(ProcessResult {
                     success: false,
-                    message: format!("Segment {} failed: {}", i + 1, String::from_utf8_lossy(&out.stderr)),
+                    message: format!(
+                        "Segment {} failed: {}",
+                        i + 1,
+                        String::from_utf8_lossy(&out.stderr)
+                    ),
                     output_path: None,
                 });
             }
             Err(e) => {
-                for f in &temp_files { let _ = fs::remove_file(f); }
+                for f in &temp_files {
+                    let _ = fs::remove_file(f);
+                }
                 return Ok(ProcessResult {
                     success: false,
                     message: format!("Segment {} failed: {e}", i + 1),
@@ -519,27 +649,38 @@ async fn export_segments(
     }
 
     let list_path = temp_dir.join("xype_concat.txt");
-    let list_content: String = temp_files.iter()
+    let list_content: String = temp_files
+        .iter()
         .map(|p| format!("file '{}'\n", p.to_str().unwrap_or("").replace('\\', "/")))
         .collect();
     if let Err(e) = fs::write(&list_path, &list_content) {
-        for f in &temp_files { let _ = fs::remove_file(f); }
+        for f in &temp_files {
+            let _ = fs::remove_file(f);
+        }
         return Err(e.to_string());
     }
 
     let output_path = input_dir.join(format!("{}_export.mp4", input_name));
-    if output_path.exists() { let _ = fs::remove_file(&output_path); }
+    if output_path.exists() {
+        let _ = fs::remove_file(&output_path);
+    }
 
     let result = ffmpeg_cmd(&ffmpeg)
         .arg("-y")
-        .arg("-f").arg("concat")
-        .arg("-safe").arg("0")
-        .arg("-i").arg(&list_path)
-        .arg("-c").arg("copy")
+        .arg("-f")
+        .arg("concat")
+        .arg("-safe")
+        .arg("0")
+        .arg("-i")
+        .arg(&list_path)
+        .arg("-c")
+        .arg("copy")
         .arg(&output_path)
         .output();
 
-    for f in &temp_files { let _ = fs::remove_file(f); }
+    for f in &temp_files {
+        let _ = fs::remove_file(f);
+    }
     let _ = fs::remove_file(&list_path);
 
     Ok(match result {
@@ -553,7 +694,11 @@ async fn export_segments(
             message: format!("Merge failed: {}", String::from_utf8_lossy(&out.stderr)),
             output_path: None,
         },
-        Err(e) => ProcessResult { success: false, message: format!("Failed: {e}"), output_path: None },
+        Err(e) => ProcessResult {
+            success: false,
+            message: format!("Failed: {e}"),
+            output_path: None,
+        },
     })
 }
 
@@ -562,9 +707,15 @@ fn probe_duration(ffmpeg: &PathBuf, input: &PathBuf) -> f64 {
         let ffprobe = parent.join("ffprobe.exe");
         if ffprobe.exists() {
             if let Ok(out) = ffmpeg_cmd(&ffprobe)
-                .args(["-v", "0", "-show_entries", "format=duration",
-                       "-of", "default=noprint_wrappers=1:nokey=1",
-                       input.to_str().unwrap_or("")])
+                .args([
+                    "-v",
+                    "0",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
+                    input.to_str().unwrap_or(""),
+                ])
                 .output()
             {
                 if let Ok(d) = String::from_utf8_lossy(&out.stdout).trim().parse::<f64>() {
@@ -580,8 +731,16 @@ fn probe_duration(ffmpeg: &PathBuf, input: &PathBuf) -> f64 {
                 let s = &line[pos + 10..];
                 let parts: Vec<&str> = s.split(':').collect();
                 if parts.len() >= 3 {
-                    if let (Ok(h), Ok(m)) = (parts[0].trim().parse::<f64>(), parts[1].parse::<f64>()) {
-                        if let Ok(sec) = parts[2].split(',').next().unwrap_or("").trim().parse::<f64>() {
+                    if let (Ok(h), Ok(m)) =
+                        (parts[0].trim().parse::<f64>(), parts[1].parse::<f64>())
+                    {
+                        if let Ok(sec) = parts[2]
+                            .split(',')
+                            .next()
+                            .unwrap_or("")
+                            .trim()
+                            .parse::<f64>()
+                        {
                             return h * 3600.0 + m * 60.0 + sec;
                         }
                     }
@@ -598,23 +757,26 @@ fn blend_weights(frames: u32, weighting: &str) -> String {
         "gaussian" => {
             let center = (n as f64 - 1.0) / 2.0;
             let sigma = (center / 2.0).max(0.5);
-            let w: Vec<String> = (0..n).map(|i| {
-                let x = (i as f64 - center) / sigma;
-                format!("{:.3}", (-0.5 * x * x).exp())
-            }).collect();
+            let w: Vec<String> = (0..n)
+                .map(|i| {
+                    let x = (i as f64 - center) / sigma;
+                    format!("{:.3}", (-0.5 * x * x).exp())
+                })
+                .collect();
             w.join(" ")
         }
         "pyramid" => {
             let half = (n + 1) / 2;
-            (0..n).map(|i| {
-                let d = if i < half { i + 1 } else { n - i };
-                d.to_string()
-            }).collect::<Vec<_>>().join(" ")
+            (0..n)
+                .map(|i| {
+                    let d = if i < half { i + 1 } else { n - i };
+                    d.to_string()
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
         }
         // Ascending ladder — like Vegas Pro style, gives more weight to recent frames
-        "vegas" => {
-            (1..=n).map(|i| i.to_string()).collect::<Vec<_>>().join(" ")
-        }
+        "vegas" => (1..=n).map(|i| i.to_string()).collect::<Vec<_>>().join(" "),
         "equal" => String::new(),
         // Custom: pass through if it's space-separated numbers, else fall back to equal
         custom => {
@@ -650,7 +812,11 @@ fn audio_tempo_filter(timescale: f64) -> String {
 }
 
 fn motion_runtime_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    Ok(app.path().app_data_dir().map_err(|e| e.to_string())?.join("motion-runtime"))
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("motion-runtime"))
 }
 
 #[tauri::command]
@@ -675,7 +841,8 @@ async fn install_motion_runtime(app: tauri::AppHandle) -> Result<ProcessResult, 
     let _ = fs::write(scripts_dir.join("__init__.py"), b"");
 
     // Always copy latest bundled script into app data (overwrite old)
-    let bundled_script = app.path()
+    let bundled_script = app
+        .path()
         .resource_dir()
         .map_err(|e| e.to_string())?
         .join("motion-runtime")
@@ -727,7 +894,10 @@ async fn install_motion_runtime(app: tauri::AppHandle) -> Result<ProcessResult, 
         let response = client.get(*url).send().await.map_err(|e| e.to_string())?;
         let bytes = response.bytes().await.map_err(|e| e.to_string())?;
         fs::write(scripts_dir.join(name), &bytes).map_err(|e| e.to_string())?;
-        let _ = app.emit("motion-runtime-progress", 75 + ((i + 1) * 25 / script_urls.len()));
+        let _ = app.emit(
+            "motion-runtime-progress",
+            75 + ((i + 1) * 25 / script_urls.len()),
+        );
     }
 
     let _ = app.emit("motion-runtime-progress", 100);
@@ -757,10 +927,15 @@ async fn render_video_motion_runtime(
     let ffmpeg = PathBuf::from(&ffmpeg_path);
 
     if !input.exists() {
-        return Ok(ProcessResult { success: false, message: "Input file not found".to_string(), output_path: None });
+        return Ok(ProcessResult {
+            success: false,
+            message: "Input file not found".to_string(),
+            output_path: None,
+        });
     }
 
-    let runtime = app.path()
+    let runtime = app
+        .path()
         .app_data_dir()
         .map_err(|e| e.to_string())?
         .join("motion-runtime");
@@ -768,7 +943,8 @@ async fn render_video_motion_runtime(
     let script = runtime.join("xype_motion.vpy");
 
     // Always refresh script from bundled resources
-    let bundled_script = app.path()
+    let bundled_script = app
+        .path()
         .resource_dir()
         .map_err(|e| e.to_string())?
         .join("motion-runtime")
@@ -787,17 +963,27 @@ async fn render_video_motion_runtime(
 
     let duration = probe_duration(&ffmpeg, &input);
     let effective_timescale = if timescale > 0.0 { timescale } else { 1.0 };
-    let output_duration = if effective_timescale != 1.0 { duration / effective_timescale } else { duration };
+    let output_duration = if effective_timescale != 1.0 {
+        duration / effective_timescale
+    } else {
+        duration
+    };
 
     let default_dir = PathBuf::from(".");
     let input_dir = input.parent().unwrap_or(&default_dir);
-    let input_name = input.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+    let input_name = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("output");
     let output_path = input_dir.join(format!("{}_motion.mp4", input_name));
-    if output_path.exists() { let _ = fs::remove_file(&output_path); }
+    if output_path.exists() {
+        let _ = fs::remove_file(&output_path);
+    }
 
     let interpolation_enabled = interpolate_fps > 0;
     let working_fps = interpolate_fps.max(output_fps).max(1);
-    let blur_intensity = ((frames_to_blend as f64 * output_fps as f64) / working_fps as f64).clamp(0.1, 4.0);
+    let blur_intensity =
+        ((frames_to_blend as f64 * output_fps as f64) / working_fps as f64).clamp(0.1, 4.0);
     let mut recipe_value = serde_json::json!({
         "data": {
             "interpolation": {
@@ -842,7 +1028,8 @@ async fn render_video_motion_runtime(
     }
 
     let mut vs_cmd = hidden_cmd(&vspipe);
-    vs_cmd.current_dir(&runtime)
+    vs_cmd
+        .current_dir(&runtime)
         .env("PATH", path_env)
         .arg("--container")
         .arg("y4m")
@@ -856,8 +1043,14 @@ async fn render_video_motion_runtime(
         .stderr(Stdio::piped());
 
     let mut vs_child = vs_cmd.spawn().map_err(|e| e.to_string())?;
-    let vs_stdout = vs_child.stdout.take().ok_or_else(|| "Failed to capture VSPipe output".to_string())?;
-    let vs_stderr = vs_child.stderr.take().ok_or_else(|| "Failed to capture VSPipe errors".to_string())?;
+    let vs_stdout = vs_child
+        .stdout
+        .take()
+        .ok_or_else(|| "Failed to capture VSPipe output".to_string())?;
+    let vs_stderr = vs_child
+        .stderr
+        .take()
+        .ok_or_else(|| "Failed to capture VSPipe errors".to_string())?;
 
     let is_nvenc = encoder == "h264_nvenc";
     let codec = if is_nvenc { "h264_nvenc" } else { "libx264" };
@@ -871,21 +1064,37 @@ async fn render_video_motion_runtime(
     };
 
     let mut ff_cmd = ffmpeg_cmd(&ffmpeg);
-    ff_cmd.stdin(Stdio::from(vs_stdout))
+    ff_cmd
+        .stdin(Stdio::from(vs_stdout))
         .arg("-y")
-        .arg("-f").arg("yuv4mpegpipe")
-        .arg("-i").arg("-")
-        .arg("-i").arg(&input)
-        .arg("-map").arg("0:v:0")
-        .arg("-map").arg("1:a?")
+        .arg("-f")
+        .arg("yuv4mpegpipe")
+        .arg("-i")
+        .arg("-")
+        .arg("-i")
+        .arg(&input)
+        .arg("-map")
+        .arg("0:v:0")
+        .arg("-map")
+        .arg("1:a?")
         .arg("-shortest")
-        .arg("-c:v").arg(codec)
-        .arg(quality_flag).arg(crf.to_string());
+        .arg("-c:v")
+        .arg(codec)
+        .arg(quality_flag)
+        .arg(crf.to_string());
 
     if is_nvenc {
-        ff_cmd.arg("-pix_fmt").arg("yuv420p").arg("-preset").arg(preset);
+        ff_cmd
+            .arg("-pix_fmt")
+            .arg("yuv420p")
+            .arg("-preset")
+            .arg(preset);
     } else {
-        ff_cmd.arg("-preset").arg(preset).arg("-pix_fmt").arg("yuv420p");
+        ff_cmd
+            .arg("-preset")
+            .arg(preset)
+            .arg("-pix_fmt")
+            .arg("yuv420p");
     }
 
     if let Some(ref af) = audio_filter {
@@ -894,15 +1103,23 @@ async fn render_video_motion_runtime(
         ff_cmd.arg("-c:a").arg("copy");
     }
 
-    ff_cmd.arg("-progress").arg("pipe:1")
+    ff_cmd
+        .arg("-progress")
+        .arg("pipe:1")
         .arg("-nostats")
         .arg(&output_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
     let mut ff_child = ff_cmd.spawn().map_err(|e| e.to_string())?;
-    let ff_stdout = ff_child.stdout.take().ok_or_else(|| "Failed to capture FFmpeg progress".to_string())?;
-    let ff_stderr = ff_child.stderr.take().ok_or_else(|| "Failed to capture FFmpeg errors".to_string())?;
+    let ff_stdout = ff_child
+        .stdout
+        .take()
+        .ok_or_else(|| "Failed to capture FFmpeg progress".to_string())?;
+    let ff_stderr = ff_child
+        .stderr
+        .take()
+        .ok_or_else(|| "Failed to capture FFmpeg errors".to_string())?;
 
     let app_clone = app.clone();
     let progress_handle = std::thread::spawn(move || {
@@ -920,10 +1137,18 @@ async fn render_video_motion_runtime(
     });
 
     let vs_stderr_handle = std::thread::spawn(move || {
-        BufReader::new(vs_stderr).lines().flatten().collect::<Vec<_>>().join("\n")
+        BufReader::new(vs_stderr)
+            .lines()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join("\n")
     });
     let ff_stderr_handle = std::thread::spawn(move || {
-        BufReader::new(ff_stderr).lines().flatten().collect::<Vec<_>>().join("\n")
+        BufReader::new(ff_stderr)
+            .lines()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join("\n")
     });
 
     let ff_status = ff_child.wait().map_err(|e| e.to_string())?;
@@ -933,19 +1158,24 @@ async fn render_video_motion_runtime(
     let ff_stderr_output = ff_stderr_handle.join().unwrap_or_default();
     let _ = app.emit("render-progress", 1.0_f64);
 
-    Ok(if ff_status.success() && vs_status.success() && output_path.exists() {
-        ProcessResult {
-            success: true,
-            message: format!("xype motion runtime → {}fps", output_fps),
-            output_path: output_path.to_str().map(|s| s.to_string()),
-        }
-    } else {
-        ProcessResult {
-            success: false,
-            message: format!("Motion runtime error:\n{}\n{}", vs_stderr_output, ff_stderr_output),
-            output_path: None,
-        }
-    })
+    Ok(
+        if ff_status.success() && vs_status.success() && output_path.exists() {
+            ProcessResult {
+                success: true,
+                message: format!("xype motion runtime → {}fps", output_fps),
+                output_path: output_path.to_str().map(|s| s.to_string()),
+            }
+        } else {
+            ProcessResult {
+                success: false,
+                message: format!(
+                    "Motion runtime error:\n{}\n{}",
+                    vs_stderr_output, ff_stderr_output
+                ),
+                output_path: None,
+            }
+        },
+    )
 }
 
 #[tauri::command]
@@ -965,19 +1195,32 @@ async fn render_video(
     let ffmpeg = PathBuf::from(&ffmpeg_path);
 
     if !input.exists() {
-        return Ok(ProcessResult { success: false, message: "Input file not found".to_string(), output_path: None });
+        return Ok(ProcessResult {
+            success: false,
+            message: "Input file not found".to_string(),
+            output_path: None,
+        });
     }
 
     let duration = probe_duration(&ffmpeg, &input);
     let effective_timescale = if timescale > 0.0 { timescale } else { 1.0 };
     // Progress tracks against output duration
-    let output_duration = if effective_timescale != 1.0 { duration / effective_timescale } else { duration };
+    let output_duration = if effective_timescale != 1.0 {
+        duration / effective_timescale
+    } else {
+        duration
+    };
 
     let default_dir = PathBuf::from(".");
     let input_dir = input.parent().unwrap_or(&default_dir);
-    let input_name = input.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+    let input_name = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("output");
     let output_path = input_dir.join(format!("{}_smoothie.mp4", input_name));
-    if output_path.exists() { let _ = fs::remove_file(&output_path); }
+    if output_path.exists() {
+        let _ = fs::remove_file(&output_path);
+    }
 
     let mut filters: Vec<String> = Vec::new();
 
@@ -991,7 +1234,10 @@ async fn render_video(
         if weights.is_empty() {
             filters.push(format!("tmix=frames={}", frames_to_blend));
         } else {
-            filters.push(format!("tmix=frames={}:weights='{}'", frames_to_blend, weights));
+            filters.push(format!(
+                "tmix=frames={}:weights='{}'",
+                frames_to_blend, weights
+            ));
         }
     }
     if (effective_timescale - 1.0).abs() > 0.001 {
@@ -1007,19 +1253,29 @@ async fn render_video(
     let preset = if is_nvenc { "p4" } else { "fast" };
 
     let use_timescale = (effective_timescale - 1.0).abs() > 0.001;
-    let audio_filter = if use_timescale { Some(audio_tempo_filter(effective_timescale)) } else { None };
+    let audio_filter = if use_timescale {
+        Some(audio_tempo_filter(effective_timescale))
+    } else {
+        None
+    };
 
     let mut cmd = ffmpeg_cmd(&ffmpeg);
     cmd.stdin(Stdio::null())
         .arg("-y")
-        .arg("-i").arg(&input)
-        .arg("-vf").arg(&filter_str)
-        .arg("-c:v").arg(codec)
-        .arg(quality_flag).arg(crf.to_string());
+        .arg("-i")
+        .arg(&input)
+        .arg("-vf")
+        .arg(&filter_str)
+        .arg("-c:v")
+        .arg(codec)
+        .arg(quality_flag)
+        .arg(crf.to_string());
 
     if is_nvenc {
-        cmd.arg("-pix_fmt").arg("yuv420p")
-            .arg("-preset").arg(preset);
+        cmd.arg("-pix_fmt")
+            .arg("yuv420p")
+            .arg("-preset")
+            .arg(preset);
     } else {
         cmd.arg("-preset").arg(preset);
     }
@@ -1030,7 +1286,8 @@ async fn render_video(
         cmd.arg("-c:a").arg("copy");
     }
 
-    cmd.arg("-progress").arg("pipe:1")
+    cmd.arg("-progress")
+        .arg("pipe:1")
         .arg("-nostats")
         .arg(&output_path)
         .stdout(Stdio::piped())
@@ -1057,7 +1314,11 @@ async fn render_video(
     });
 
     let stderr_handle = std::thread::spawn(move || {
-        BufReader::new(stderr).lines().flatten().collect::<Vec<_>>().join("\n")
+        BufReader::new(stderr)
+            .lines()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join("\n")
     });
 
     let status = child.wait().map_err(|e| e.to_string())?;
@@ -1086,24 +1347,45 @@ struct Mp4Box {
     end: usize,
 }
 
-fn find_mp4_box(data: &[u8], start: usize, search_end: usize, box_type: &[u8; 4]) -> Option<Mp4Box> {
+fn find_mp4_box(
+    data: &[u8],
+    start: usize,
+    search_end: usize,
+    box_type: &[u8; 4],
+) -> Option<Mp4Box> {
     let mut pos = start;
     let limit = search_end.min(data.len());
     while pos + 8 <= limit {
-        let size_u32 = u32::from_be_bytes([data[pos], data[pos+1], data[pos+2], data[pos+3]]) as usize;
+        let size_u32 =
+            u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
         let (box_size, header_size) = if size_u32 == 1 {
-            if pos + 16 > limit { break; }
-            let hi = u32::from_be_bytes([data[pos+8],  data[pos+9],  data[pos+10], data[pos+11]]) as u64;
-            let lo = u32::from_be_bytes([data[pos+12], data[pos+13], data[pos+14], data[pos+15]]) as u64;
+            if pos + 16 > limit {
+                break;
+            }
+            let hi =
+                u32::from_be_bytes([data[pos + 8], data[pos + 9], data[pos + 10], data[pos + 11]])
+                    as u64;
+            let lo = u32::from_be_bytes([
+                data[pos + 12],
+                data[pos + 13],
+                data[pos + 14],
+                data[pos + 15],
+            ]) as u64;
             ((hi << 32 | lo) as usize, 16usize)
         } else if size_u32 == 0 {
             (limit - pos, 8usize)
         } else {
             (size_u32, 8usize)
         };
-        if box_size < header_size || pos + box_size > limit { break; }
-        if data[pos+4..pos+8] == *box_type {
-            return Some(Mp4Box { offset: pos, content_start: pos + header_size, end: pos + box_size });
+        if box_size < header_size || pos + box_size > limit {
+            break;
+        }
+        if data[pos + 4..pos + 8] == *box_type {
+            return Some(Mp4Box {
+                offset: pos,
+                content_start: pos + header_size,
+                end: pos + box_size,
+            });
         }
         pos += box_size;
     }
@@ -1116,7 +1398,11 @@ fn patch_tiktok_optimizer(input_path: String) -> Result<ProcessResult, String> {
 
     let input = PathBuf::from(&input_path);
     if !input.exists() {
-        return Ok(ProcessResult { success: false, message: "File not found".to_string(), output_path: None });
+        return Ok(ProcessResult {
+            success: false,
+            message: "File not found".to_string(),
+            output_path: None,
+        });
     }
 
     let input_size = fs::metadata(&input).map_err(|e| e.to_string())?.len();
@@ -1133,33 +1419,58 @@ fn patch_tiktok_optimizer(input_path: String) -> Result<ProcessResult, String> {
 
     let moov = match find_mp4_box(&buf, 0, len, b"moov") {
         Some(b) => b,
-        None => return Ok(ProcessResult { success: false, message: "\"moov\" box not found — is this a valid MP4?".to_string(), output_path: None }),
+        None => {
+            return Ok(ProcessResult {
+                success: false,
+                message: "\"moov\" box not found — is this a valid MP4?".to_string(),
+                output_path: None,
+            })
+        }
     };
     let mvhd = match find_mp4_box(&buf, moov.content_start, moov.end, b"mvhd") {
         Some(b) => b,
-        None => return Ok(ProcessResult { success: false, message: "\"mvhd\" box not found inside \"moov\"".to_string(), output_path: None }),
+        None => {
+            return Ok(ProcessResult {
+                success: false,
+                message: "\"mvhd\" box not found inside \"moov\"".to_string(),
+                output_path: None,
+            })
+        }
     };
 
     let version = buf[mvhd.content_start];
     let matrix_offset = match version {
         0 => mvhd.offset + 44,
         1 => mvhd.offset + 56,
-        v => return Ok(ProcessResult { success: false, message: format!("Unsupported mvhd version: {}", v), output_path: None }),
+        v => {
+            return Ok(ProcessResult {
+                success: false,
+                message: format!("Unsupported mvhd version: {}", v),
+                output_path: None,
+            })
+        }
     };
 
     let b_offset = matrix_offset + 4;
     if b_offset + 4 > mvhd.end {
-        return Ok(ProcessResult { success: false, message: "mvhd box too short to patch".to_string(), output_path: None });
+        return Ok(ProcessResult {
+            success: false,
+            message: "mvhd box too short to patch".to_string(),
+            output_path: None,
+        });
     }
 
-    buf[b_offset]     = 0;
+    buf[b_offset] = 0;
     buf[b_offset + 1] = 0;
     buf[b_offset + 2] = 0;
     buf[b_offset + 3] = 1;
 
     let default_dir = PathBuf::from(".");
     let input_dir = input.parent().unwrap_or(&default_dir);
-    let input_name = input.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+    let input_name = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("output");
     let output_path = input_dir.join(format!("{}_clean.mp4", input_name));
 
     fs::write(&output_path, &buf).map_err(|e| e.to_string())?;
@@ -1187,20 +1498,35 @@ async fn compress_video(
     let ffmpeg = PathBuf::from(&ffmpeg_path);
 
     if !input.exists() {
-        return Ok(ProcessResult { success: false, message: "Input file not found".to_string(), output_path: None });
+        return Ok(ProcessResult {
+            success: false,
+            message: "Input file not found".to_string(),
+            output_path: None,
+        });
     }
     if !ffmpeg.exists() {
-        return Ok(ProcessResult { success: false, message: "FFmpeg not found".to_string(), output_path: None });
+        return Ok(ProcessResult {
+            success: false,
+            message: "FFmpeg not found".to_string(),
+            output_path: None,
+        });
     }
 
     let duration = probe_duration(&ffmpeg, &input);
     if duration <= 0.0 {
-        return Ok(ProcessResult { success: false, message: "Could not detect video duration".to_string(), output_path: None });
+        return Ok(ProcessResult {
+            success: false,
+            message: "Could not detect video duration".to_string(),
+            output_path: None,
+        });
     }
 
     let default_dir = PathBuf::from(".");
     let input_dir = input.parent().unwrap_or(&default_dir);
-    let input_name = input.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+    let input_name = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("output");
     let output_path = input_dir.join(format!("{}_compressed.mp4", input_name));
     if output_path.exists() {
         let _ = fs::remove_file(&output_path);
@@ -1231,10 +1557,14 @@ async fn compress_video(
     let mut cmd = ffmpeg_cmd(&ffmpeg);
     cmd.stdin(Stdio::null())
         .arg("-y")
-        .arg("-i").arg(&input)
-        .arg("-vf").arg(&filter_str)
-        .arg("-c:v").arg(codec)
-        .arg(quality_flag).arg(q.to_string());
+        .arg("-i")
+        .arg(&input)
+        .arg("-vf")
+        .arg(&filter_str)
+        .arg("-c:v")
+        .arg(codec)
+        .arg(quality_flag)
+        .arg(q.to_string());
 
     if codec == "h264_nvenc" {
         let nvenc_preset = match preset.as_str() {
@@ -1251,18 +1581,28 @@ async fn compress_video(
         cmd.arg("-tag:v").arg("hvc1");
     }
 
-    cmd.arg("-c:a").arg("aac")
-        .arg("-b:a").arg(format!("{}k", audio))
-        .arg("-movflags").arg("+faststart")
-        .arg("-progress").arg("pipe:1")
+    cmd.arg("-c:a")
+        .arg("aac")
+        .arg("-b:a")
+        .arg(format!("{}k", audio))
+        .arg("-movflags")
+        .arg("+faststart")
+        .arg("-progress")
+        .arg("pipe:1")
         .arg("-nostats")
         .arg(&output_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;
-    let stdout = child.stdout.take().ok_or_else(|| "Failed to capture FFmpeg progress".to_string())?;
-    let stderr = child.stderr.take().ok_or_else(|| "Failed to capture FFmpeg errors".to_string())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Failed to capture FFmpeg progress".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "Failed to capture FFmpeg errors".to_string())?;
 
     let app_clone = app.clone();
     let progress_handle = std::thread::spawn(move || {
@@ -1282,7 +1622,11 @@ async fn compress_video(
     });
 
     let stderr_handle = std::thread::spawn(move || {
-        BufReader::new(stderr).lines().flatten().collect::<Vec<_>>().join("\n")
+        BufReader::new(stderr)
+            .lines()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join("\n")
     });
 
     let status = child.wait().map_err(|e| e.to_string())?;
@@ -1349,7 +1693,10 @@ async fn compress_for_discord(
 
     let default_dir = PathBuf::from(".");
     let input_dir = input.parent().unwrap_or(&default_dir);
-    let input_name = input.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+    let input_name = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("output");
     let output_path = input_dir.join(format!("{}_discord.mp4", input_name));
     if output_path.exists() {
         let _ = fs::remove_file(&output_path);
@@ -1427,7 +1774,11 @@ async fn compress_for_discord(
     });
 
     let stderr_handle = std::thread::spawn(move || {
-        BufReader::new(stderr).lines().flatten().collect::<Vec<_>>().join("\n")
+        BufReader::new(stderr)
+            .lines()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join("\n")
     });
 
     let status = child.wait().map_err(|e| e.to_string())?;
@@ -1477,7 +1828,11 @@ pub fn run() {
     // Windows deep-link second-instance shortcut: search ALL args for a xype:// URL,
     // write it to a pending-auth file, then exit. The running instance polls the file.
     let args: Vec<String> = std::env::args().collect();
-    if let Some(url) = args.iter().map(|a| a.trim_matches('"').trim()).find(|a| a.starts_with("xype://")) {
+    if let Some(url) = args
+        .iter()
+        .map(|a| a.trim_matches('"').trim())
+        .find(|a| a.starts_with("xype://"))
+    {
         if !url.is_empty() {
             if let Ok(path) = pending_auth_file() {
                 if let Some(parent) = path.parent() {
@@ -1490,6 +1845,7 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        .manage(DiscordPresenceState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -1539,6 +1895,7 @@ pub fn run() {
             check_app_access_detailed,
             load_config,
             save_config,
+            set_discord_presence_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

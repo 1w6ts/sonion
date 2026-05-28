@@ -31,14 +31,14 @@ import {
 interface ProcessResult { success: boolean; message: string; output_path?: string; }
 interface PublicAuthSession { user_id: string; email: string; expires_at: string; }
 interface Seg { id: string; inPoint: number; outPoint: number; }
-type View = "clean" | "trim" | "render" | "discord" | "compress" | "settings";
+type View = "home" | "clean" | "trim" | "render" | "discord" | "compress" | "settings";
 type CompressEncoder = "libx264" | "libx265" | "h264_nvenc";
 type CompressResolution = "source" | "1080" | "720" | "480";
 type CompressPreset = "medium" | "slow" | "slower";
 
 const VIDEO_EXTS = ["mp4", "mov", "mkv", "avi", "webm", "m4v"];
 
-const VIEW_META: Record<View, { title: string; sub?: string; icon: React.ReactNode }> = {
+const VIEW_META: Record<Exclude<View, "home">, { title: string; sub?: string; icon: React.ReactNode }> = {
   discord: { title: "Discord Compress", sub: "8 MB Target", icon: <SiDiscord /> },
   compress: { title: "Quality Compress", sub: "HandBrake-style", icon: <PiFilmSlateDuotone /> },
   clean: { title: "TikTok Optimizer", sub: "Metadata Patch", icon: <PiSparkleDuotone /> },
@@ -55,7 +55,7 @@ const fmt = (t: number) => {
 };
 
 export default function App() {
-  const [view, setView] = useState<View>("discord");
+  const [view, setView] = useState<View>("home");
   const [ffmpegPath, setFfmpegPath] = useState("");
   const [ffmpegValid, setFfmpegValid] = useState<boolean | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -64,6 +64,8 @@ export default function App() {
   const [authSession, setAuthSession] = useState<PublicAuthSession | null>(null);
   const [appAccess, setAppAccess] = useState<boolean | null>(null);
   const [accessError, setAccessError] = useState<string>("");
+  const [discordPresenceEnabled, setDiscordPresenceEnabledState] = useState(() => localStorage.getItem("discordPresence.enabled") !== "false");
+  const [discordPresenceStatus, setDiscordPresenceStatus] = useState<"connected" | "off" | "error" | "loading">("loading");
 
   // ── Updater state ──
   type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "ready" | "uptodate" | "error";
@@ -76,6 +78,23 @@ export default function App() {
   const navigate = (nextView: View) => {
     if (nextView === view) return;
     setView(nextView);
+  };
+
+  const applyDiscordPresence = async (enabled: boolean) => {
+    setDiscordPresenceStatus("loading");
+    try {
+      await invoke("set_discord_presence_enabled", { enabled });
+      setDiscordPresenceStatus(enabled ? "connected" : "off");
+    } catch (e) {
+      console.warn("Discord Rich Presence failed:", e);
+      setDiscordPresenceStatus(enabled ? "error" : "off");
+    }
+  };
+
+  const setDiscordPresenceEnabled = (enabled: boolean) => {
+    setDiscordPresenceEnabledState(enabled);
+    localStorage.setItem("discordPresence.enabled", String(enabled));
+    void applyDiscordPresence(enabled);
   };
 
   // ── Clean state ──
@@ -168,6 +187,10 @@ export default function App() {
 
   useEffect(() => {
     getVersion().then(setAppVersion).catch(() => setAppVersion(""));
+  }, []);
+
+  useEffect(() => {
+    void applyDiscordPresence(discordPresenceEnabled);
   }, []);
 
   useEffect(() => {
@@ -672,53 +695,41 @@ export default function App() {
   const renderFramesBlended = Math.max(1, Math.round(renderWorkingFps / renderOutputFps * blurAmount));
 
   return (
-    <div className="flex h-screen overflow-hidden bg-black text-white antialiased">
+    <div className="relative flex h-screen overflow-hidden bg-[#0b0c0e] text-white antialiased">
       {/* background */}
-      <div className="pointer-events-none fixed inset-0">
-        <div
-          className="absolute inset-0 opacity-[0.025]"
-          style={{
-            backgroundImage:
-              'linear-gradient(rgba(255,255,255,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.08) 1px, transparent 1px)',
-            backgroundSize: '44px 44px',
-          }}
-        />
-
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_40%)]" />
+      <div className="pointer-events-none fixed inset-0 z-0">
+        <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
+        <div className="absolute inset-x-0 bottom-0 h-px bg-black" />
       </div>
 
       {/* sidebar */}
       <aside
         className={cn(
-          'relative z-10 flex shrink-0 flex-col border-r border-white/[0.06] bg-white/[0.02] backdrop-blur-2xl transition-all duration-300',
-          sidebarCollapsed ? 'w-[74px]' : 'w-[248px]'
+          'relative z-10 flex shrink-0 flex-col border-r border-white/[0.075] bg-[#090a0c]/95 transition-[width] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)]',
+          sidebarCollapsed ? 'w-[58px]' : 'w-[204px]'
         )}
       >
         {/* logo */}
-        <div className="flex h-16 items-center px-4">
-          <div className="flex items-center gap-3">
+        <div className="flex h-12 items-center justify-center px-3">
+          <button
+            type="button"
+            onClick={() => navigate("home")}
+            className={cn(
+              "group flex h-8 w-8 items-center justify-center rounded-lg outline-none transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.96]",
+              "focus-visible:ring-2 focus-visible:ring-white/15"
+            )}
+            aria-label="Home"
+          >
             <img
               src="/logo.png"
               alt="xype"
-              className="h-7 w-7 opacity-90"
+              className="h-5 w-5 shrink-0 opacity-90 transition-opacity group-hover:opacity-100"
             />
-
-            {!sidebarCollapsed && (
-              <div>
-                <p className="text-[14px] font-medium tracking-[-0.02em] text-white">
-                  xype
-                </p>
-
-                <p className="mt-0.5 text-[11px] text-white/30">
-                  video toolkit
-                </p>
-              </div>
-            )}
-          </div>
+          </button>
         </div>
 
         {/* nav */}
-        <nav className="flex-1 px-3 pb-3">
+        <nav className="flex-1 px-2 pb-2">
           <div className="space-y-1">
             <SidebarItem
               collapsed={sidebarCollapsed}
@@ -766,32 +777,64 @@ export default function App() {
             >
               Motion Blur
             </SidebarItem>
+
+            <div className="my-2 border-t border-white/[0.055]" />
+
+            <SidebarItem
+              collapsed={sidebarCollapsed}
+              active={view === 'settings'}
+              onClick={() => navigate('settings')}
+              icon={<PiGearSixDuotone />}
+            >
+              Settings
+              <span className={cn("ml-auto flex items-center gap-1", sidebarCollapsed && "hidden")}>
+                {updateStatus === "available" && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0 anim-scale-in" />
+                )}
+                {ffmpegValid === false && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-destructive shrink-0 anim-scale-in" />
+                )}
+              </span>
+            </SidebarItem>
           </div>
         </nav>
-
-        {/* bottom */}
-        <div className="border-t border-white/[0.06] p-3">
-          <SidebarItem
-            collapsed={sidebarCollapsed}
-            active={view === 'settings'}
-            onClick={() => navigate('settings')}
-            icon={<PiGearSixDuotone />}
-          >
-            Settings
-            <span className={cn("ml-auto flex items-center gap-1", sidebarCollapsed && "hidden")}>
-              {updateStatus === "available" && (
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0 anim-scale-in" />
-              )}
-              {ffmpegValid === false && (
-                <span className="w-1.5 h-1.5 rounded-full bg-destructive shrink-0 anim-scale-in" />
-              )}
-            </span>
-          </SidebarItem>
-        </div>
       </aside>
 
       {/* main */}
       <div className="relative z-10 flex flex-1 flex-col overflow-hidden">
+
+        {/* Home */}
+        {view === "home" && (
+          <main className="flex-1 overflow-auto">
+            <div className="mx-auto flex min-h-full w-full max-w-3xl items-center p-6">
+              <section className="w-full overflow-hidden rounded-[16px] border border-white/[0.075] bg-[#101115] shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
+                {[
+                  { title: "Quality Compress", sub: "HandBrake-style output for TikTok and uploads.", icon: <PiFilmSlateDuotone />, view: "compress" as View },
+                  { title: "Discord Compress", sub: "Fit clips under the 8 MB limit.", icon: <SiDiscord />, view: "discord" as View },
+                  { title: "Lossless Trim", sub: "Cut clips without re-encoding.", icon: <PiScissorsDuotone />, view: "trim" as View },
+                  { title: "Motion Blur", sub: "Frame blending and Smoothie recipes.", icon: <PiFilmReelDuotone />, view: "render" as View },
+                  { title: "Settings", sub: "FFmpeg, account, and updates.", icon: <PiGearSixDuotone />, view: "settings" as View },
+                ].map((tool, index) => (
+                  <button key={tool.title} type="button" onClick={() => navigate(tool.view)}
+                    className={cn(
+                      "anim-slide-up group flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-white/[0.035] active:bg-white/[0.05]",
+                      index > 0 && "border-t border-white/[0.055]"
+                    )}
+                    style={{ animationDelay: `${80 + index * 25}ms` }}>
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/[0.07] bg-white/[0.035] text-[17px] text-white/65 transition-colors group-hover:text-white/85">
+                      {tool.icon}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[13px] font-medium tracking-[-0.005em] text-white/90">{tool.title}</span>
+                      <span className="mt-0.5 block truncate text-[12px] text-white/40">{tool.sub}</span>
+                    </span>
+                    <span className="text-[12px] text-white/25 transition-colors group-hover:text-white/45">Open</span>
+                  </button>
+                ))}
+              </section>
+            </div>
+          </main>
+        )}
 
         {/* ─ Clean ─ */}
         {view === "clean" && (
@@ -800,7 +843,7 @@ export default function App() {
 
             {!cleanFile && (
               <main className="flex-1 flex flex-col overflow-auto">
-                <div className="flex-1 flex flex-col gap-4 p-8">
+                <div className="flex-1 flex flex-col gap-4 p-5">
                   <DropZone key="empty" isDragOver={isDragOver} onClick={pickCleanVideo}
                     label="Drop MP4 here" hint="or click to browse · MP4 only" />
                 </div>
@@ -809,11 +852,11 @@ export default function App() {
 
             {!!cleanFile && (
               <main className="flex-1 overflow-auto">
-                <div key="filled" className="min-h-full flex flex-col p-8 gap-8">
+                <div key="filled" className="min-h-full flex flex-col p-5 gap-4">
 
                   {/* File card */}
-                  <div className="anim-slide-up flex items-center gap-4 rounded-[24px] border border-white/[0.06] bg-white/[0.025] p-4">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/[0.06] bg-white/[0.03]">
+                  <div className="anim-slide-up flex items-center gap-4 rounded-[14px] border border-white/[0.075] bg-[#111216] p-4">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/[0.075] bg-white/[0.03]">
                       <PiFilmSlateDuotone className="text-[20px] text-white/60" />
                     </div>
 
@@ -834,26 +877,18 @@ export default function App() {
                     </button>
                   </div>
 
-                  {/* What this does */}
-                  <div className="anim-slide-up rounded-[28px] border border-white/[0.06] bg-white/[0.025] p-5 space-y-1.5" style={{ animationDelay: "40ms" }}>
-                    <p className="text-[12px] font-medium text-white/30">What happens</p>
-                    <p className="text-[13px] text-white/60 leading-relaxed">
-                      Writes <span className="font-mono text-white/80 text-[12px] bg-white/5 px-1.5 py-0.5 rounded-md">0x00000001</span> into the display matrix{" "}
-                      <span className="font-mono text-white/80 text-[12px] bg-white/5 px-1.5 py-0.5 rounded-md">b</span> field of the{" "}
-                      <span className="font-mono text-white/80 text-[12px] bg-white/5 px-1.5 py-0.5 rounded-md">mvhd</span> box.
-                      TikTok's ingestion pipeline reads this non-standard value and routes the video through a lighter encode,
-                      preserving quality instead of aggressively recompressing.
-                    </p>
-                    <p className="text-[12px] text-white/30">No re-encode. Instant. Output plays identically in all players.</p>
+                  <div className="anim-slide-up grid grid-cols-3 overflow-hidden rounded-[14px] border border-white/[0.075] bg-[#111216]" style={{ animationDelay: "40ms" }}>
+                    <StatusCell label="Mode" value="Metadata patch" />
+                    <StatusCell label="Encode" value="None" />
+                    <StatusCell label="Output" value="New MP4 copy" />
                   </div>
 
                   <div className="flex-1" />
 
-                  <div className="anim-fade space-y-4" style={{ animationDelay: "100ms" }}>
-                    <div className="border-t border-white/[0.06]" />
+                  <div className="sticky bottom-0 -mx-5 mt-auto space-y-3 border-t border-white/[0.075] bg-[#0b0c0e]/95 px-5 py-4 backdrop-blur-xl" style={{ animationDelay: "100ms" }}>
                     <button type="button" onClick={patchClean} disabled={!canClean}
                       className={cn(
-                        "w-full h-11 rounded-2xl text-sm font-medium transition-colors",
+                        "w-full h-10 rounded-xl text-sm font-medium transition-colors",
                         canClean
                           ? "bg-white text-black hover:bg-white/90"
                           : "bg-white/5 text-white/20 cursor-not-allowed"
@@ -879,7 +914,7 @@ export default function App() {
             {/* Empty state */}
             {!trimFile && (
               <main className="flex-1 flex flex-col overflow-auto">
-                <div className="flex-1 flex flex-col gap-4 p-8">
+                <div className="flex-1 flex flex-col gap-4 p-5">
                   {!ffmpegValid && <FfmpegWarning onClick={() => setView("settings")} />}
                   <DropZone key="empty" isDragOver={isDragOver} onClick={pickTrimVideo}
                     label="Drop video here" hint="or click to browse · MP4, MOV, MKV, AVI…" />
@@ -890,10 +925,10 @@ export default function App() {
             {/* Loaded state — true flex fill, video takes all spare height */}
             {!!trimFile && (
               <main className="flex-1 overflow-hidden flex flex-col">
-                <div key="filled" className="flex-1 flex flex-col gap-4 p-6 min-h-0">
+                <div key="filled" className="flex-1 flex flex-col gap-4 p-5 min-h-0">
 
                   {/* Video — flex-1 fills remaining vertical space */}
-                  <div className="anim-scale-in flex-1 min-h-[120px] rounded-[28px] overflow-hidden bg-black border border-white/[0.06]">
+                  <div className="anim-scale-in flex-1 min-h-[120px] rounded-[16px] overflow-hidden bg-black border border-white/[0.075]">
                     <video
                       ref={trimVideoRef}
                       src={trimVideoSrc}
@@ -918,10 +953,12 @@ export default function App() {
                         if (!v) return;
                         v.paused ? v.play() : v.pause();
                       }}
-                      className="w-9 h-9 rounded-2xl bg-white/[0.025] border border-white/[0.06] text-white/70 flex items-center justify-center hover:bg-white/[0.05] hover:text-white transition-colors shrink-0"
+                      className="w-9 h-9 rounded-xl bg-[#111216] border border-white/[0.075] text-white/70 flex items-center justify-center hover:bg-white/[0.05] hover:text-white transition-colors shrink-0"
                     >
                       {trimPlaying ? <PiPauseFill className="text-sm" /> : <PiPlayFill className="text-sm" />}
                     </button>
+                    <span className="max-w-[260px] truncate text-[12px] font-medium text-white/55">{trimFileName}</span>
+                    <span className="h-4 w-px bg-white/[0.075]" />
                     <span className="text-sm font-mono tabular-nums text-white/70">{fmt(trimCurrentTime)}</span>
                     <span className="text-white/20 text-sm">/</span>
                     <span className="text-sm font-mono tabular-nums text-white/40">{fmt(trimDuration)}</span>
@@ -968,10 +1005,10 @@ export default function App() {
                   <div className="anim-slide-up flex gap-3 shrink-0" style={{ animationDelay: "100ms" }}>
                     <button type="button" onClick={markIn}
                       className={cn(
-                        "flex-1 h-11 flex items-center justify-center gap-2 rounded-2xl border text-sm font-medium transition-colors",
+                        "flex-1 h-10 flex items-center justify-center gap-2 rounded-xl border text-sm font-medium transition-colors",
                         trimPendingIn !== null
                           ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
-                          : "border-white/[0.06] bg-white/[0.025] text-white/70 hover:bg-white/[0.05] hover:text-white"
+                          : "border-white/[0.075] bg-[#111216] text-white/70 hover:bg-white/[0.05] hover:text-white"
                       )}>
                       <span className="font-mono font-bold opacity-50 text-base leading-none">[</span>
                       <span>Set In</span>
@@ -979,9 +1016,9 @@ export default function App() {
                     </button>
                     <button type="button" onClick={markOut} disabled={trimPendingIn === null}
                       className={cn(
-                        "flex-1 h-11 flex items-center justify-center gap-2 rounded-2xl border text-sm font-medium transition-colors",
+                        "flex-1 h-10 flex items-center justify-center gap-2 rounded-xl border text-sm font-medium transition-colors",
                         trimPendingIn !== null
-                          ? "border-white/[0.06] bg-white/[0.025] text-white/70 hover:bg-white/[0.05] hover:text-white cursor-pointer"
+                          ? "border-white/[0.075] bg-[#111216] text-white/70 hover:bg-white/[0.05] hover:text-white cursor-pointer"
                           : "border-white/[0.03] text-white/20 cursor-not-allowed"
                       )}>
                       <span>Set Out</span>
@@ -995,7 +1032,7 @@ export default function App() {
                     <div className="anim-slide-up shrink-0 space-y-1 max-h-[120px] overflow-y-auto" style={{ animationDelay: "120ms" }}>
                       {trimSegs.map((seg, i) => (
                         <div key={seg.id}
-                          className="flex items-center gap-2 px-3 py-2 rounded-2xl border border-white/[0.06] bg-white/[0.025] hover:bg-white/[0.05] transition-colors group">
+                          className="flex items-center gap-2 px-3 py-2 rounded-xl border border-white/[0.075] bg-[#111216] hover:bg-white/[0.05] transition-colors group">
                           <span className="text-[10px] font-semibold text-white/30 w-3 shrink-0 tabular-nums">{i + 1}</span>
                           <span className="font-mono text-[12px] flex-1 text-white/70 tabular-nums">
                             {fmt(seg.inPoint)}
@@ -1015,10 +1052,10 @@ export default function App() {
 
                   {/* Export — pinned at bottom */}
                   <div className="shrink-0 space-y-3 pt-1">
-                    <div className="border-t border-white/[0.06]" />
+                    <div className="border-t border-white/[0.075]" />
                     <button type="button" onClick={exportClip} disabled={!canExport}
                       className={cn(
-                        "w-full h-11 rounded-2xl text-sm font-medium transition-colors",
+                        "w-full h-10 rounded-xl text-sm font-medium transition-colors",
                         canExport
                           ? "bg-white text-black hover:bg-white/90"
                           : "bg-white/5 text-white/20 cursor-not-allowed"
@@ -1045,7 +1082,7 @@ export default function App() {
             {/* Empty state */}
             {!renderFile && (
               <main className="flex-1 flex flex-col overflow-auto">
-                <div className="flex-1 flex flex-col gap-4 p-8">
+                <div className="flex-1 flex flex-col gap-4 p-5">
                   {!ffmpegValid && <FfmpegWarning onClick={() => setView("settings")} />}
                   <DropZone key="empty" isDragOver={isDragOver} onClick={pickRenderVideo}
                     label="Drop video here" hint="or click to browse · MP4, MOV, MKV, AVI…" />
@@ -1056,11 +1093,11 @@ export default function App() {
             {/* Loaded state */}
             {!!renderFile && (
               <main className="flex-1 overflow-auto">
-                <div key="filled" className="min-h-full flex flex-col p-8 gap-8">
+                <div key="filled" className="min-h-full flex flex-col p-5 gap-4">
 
                   {/* Motion runtime install card */}
                   {motionRuntimeInstalled === false && (
-                    <div className="anim-slide-up rounded-[28px] border border-white/[0.06] bg-white/[0.025] p-5 space-y-3">
+                    <div className="anim-slide-up rounded-[16px] border border-white/[0.075] bg-[#111216] p-4 space-y-3">
                       <div className="flex items-start gap-2.5">
                         <PiDownloadSimpleDuotone className="text-emerald-400 text-lg shrink-0 mt-0.5" />
                         <div className="flex-1 min-w-0">
@@ -1083,7 +1120,7 @@ export default function App() {
                         </div>
                       ) : (
                         <button type="button" onClick={installMotionRuntime}
-                          className="w-full h-11 rounded-2xl bg-white px-5 text-sm font-medium text-black transition-colors hover:bg-white/90 flex items-center justify-center gap-2">
+                          className="w-full h-10 rounded-xl bg-white px-5 text-sm font-medium text-black transition-colors hover:bg-white/90 flex items-center justify-center gap-2">
                           <PiDownloadSimpleDuotone className="text-base" />
                           Install motion engine
                         </button>
@@ -1092,8 +1129,8 @@ export default function App() {
                   )}
 
                   {/* File card */}
-                  <div className="anim-slide-up flex items-center gap-4 rounded-[24px] border border-white/[0.06] bg-white/[0.025] p-4">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/[0.06] bg-white/[0.03]">
+                  <div className="anim-slide-up flex items-center gap-4 rounded-[14px] border border-white/[0.075] bg-[#111216] p-4">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/[0.075] bg-white/[0.03]">
                       <PiFilmSlateDuotone className="text-[20px] text-white/60" />
                     </div>
 
@@ -1127,6 +1164,13 @@ export default function App() {
                   </div>
 
                   {/* ── Blur Amount ── */}
+                  <div className="anim-slide-up grid grid-cols-4 overflow-hidden rounded-[14px] border border-white/[0.075] bg-[#111216]" style={{ animationDelay: "35ms" }}>
+                    <StatusCell label="Source" value={renderInputFps !== null ? `${Math.round(renderInputFps)} fps` : renderDetecting ? "Detecting" : "Unknown"} />
+                    <StatusCell label="Output" value={`${renderOutputFps} fps`} />
+                    <StatusCell label="Blend" value={`${renderFramesBlended} frames`} />
+                    <StatusCell label="Speed" value={`${renderTimescale}x`} />
+                  </div>
+
                   <div className="anim-slide-up space-y-3" style={{ animationDelay: "40ms" }}>
                     <div className="flex items-baseline justify-between">
                       <p className="text-[12px] font-medium text-white/30">Blur Amount</p>
@@ -1146,10 +1190,10 @@ export default function App() {
                       ].map(({ label, v }) => (
                         <button key={v} type="button" onClick={() => setBlurAmount(v)}
                           className={cn(
-                            "flex-1 h-10 rounded-2xl border text-sm font-medium transition-colors",
+                            "flex-1 h-10 rounded-xl border text-sm font-medium transition-colors",
                             blurAmount === v
                               ? "bg-white text-black border-white"
-                              : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
+                              : "border-white/[0.075] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
                           )}>
                           {label}
                         </button>
@@ -1159,13 +1203,13 @@ export default function App() {
                           type="number" min="0.01" max="3" step="0.05"
                           value={blurAmount}
                           onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v > 0 && v <= 3) setBlurAmount(v); }}
-                          className="w-14 h-10 px-2 text-center font-mono text-[13px] bg-transparent border border-white/[0.06] rounded-2xl outline-none text-white placeholder:text-white/20 focus:border-white/20 tabular-nums"
+                          className="w-14 h-10 px-2 text-center font-mono text-[13px] bg-transparent border border-white/[0.075] rounded-xl outline-none text-white placeholder:text-white/20 focus:border-white/20 tabular-nums"
                         />
                       </div>
                     </div>
                   </div>
 
-                  <div className="anim-slide-up rounded-[28px] border border-white/[0.06] bg-white/[0.025] p-5 space-y-3" style={{ animationDelay: "55ms" }}>
+                  <div className="anim-slide-up rounded-[16px] border border-white/[0.075] bg-[#111216] p-4 space-y-3" style={{ animationDelay: "55ms" }}>
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="text-[12px] font-medium text-white/30">Smoothie Recipe</p>
@@ -1176,12 +1220,12 @@ export default function App() {
                       <div className="flex gap-2 shrink-0">
                         {smoothieRecipeText && (
                           <button type="button" onClick={() => { setSmoothieRecipeText(""); setSmoothieRecipeName(""); localStorage.removeItem("smth.recipeText"); localStorage.removeItem("smth.recipeName"); }}
-                            className="h-9 rounded-xl border border-white/[0.06] bg-white/[0.025] px-4 text-xs font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white">
+                            className="h-9 rounded-xl border border-white/[0.075] bg-[#111216] px-4 text-xs font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white">
                             Clear
                           </button>
                         )}
                         <button type="button" onClick={importSmoothieRecipe}
-                          className="h-9 rounded-xl border border-white/[0.06] bg-white/[0.025] px-4 text-xs font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white">
+                          className="h-9 rounded-xl border border-white/[0.075] bg-[#111216] px-4 text-xs font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white">
                           Import .ini
                         </button>
                       </div>
@@ -1195,10 +1239,10 @@ export default function App() {
                       {[30, 60, 120].map((fps) => (
                         <button key={fps} type="button" onClick={() => setRenderOutputFps(fps)}
                           className={cn(
-                            "flex-1 h-10 rounded-2xl border text-sm font-medium transition-colors",
+                            "flex-1 h-10 rounded-xl border text-sm font-medium transition-colors",
                             renderOutputFps === fps
                               ? "bg-white text-black border-white"
-                              : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
+                              : "border-white/[0.075] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
                           )}>
                           {fps}
                         </button>
@@ -1208,7 +1252,7 @@ export default function App() {
                           type="number" min="1" max="960"
                           value={renderOutputFps}
                           onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v > 0) setRenderOutputFps(v); }}
-                          className="w-16 h-10 px-2 text-center font-mono text-[13px] bg-transparent border border-white/[0.06] rounded-2xl outline-none text-white placeholder:text-white/20 focus:border-white/20 tabular-nums"
+                          className="w-16 h-10 px-2 text-center font-mono text-[13px] bg-transparent border border-white/[0.075] rounded-xl outline-none text-white placeholder:text-white/20 focus:border-white/20 tabular-nums"
                         />
                         <span className="text-[12px] text-white/30">fps</span>
                       </div>
@@ -1228,10 +1272,10 @@ export default function App() {
                       ].map(({ id, label, hint }) => (
                         <button key={id} type="button" onClick={() => setBlendWeighting(id)}
                           className={cn(
-                            "flex-1 h-14 rounded-2xl border font-medium flex flex-col items-center justify-center gap-0.5 transition-colors",
+                            "flex-1 h-14 rounded-xl border font-medium flex flex-col items-center justify-center gap-0.5 transition-colors",
                             blendWeighting === id
                               ? "bg-white text-black border-white"
-                              : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
+                              : "border-white/[0.075] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
                           )}>
                           <span className="text-[11px] font-semibold leading-none">{label}</span>
                           <span className={cn("text-[9px] font-normal mt-0.5", blendWeighting === id ? "opacity-60 text-black/60" : "opacity-35 text-white/30")}>{hint}</span>
@@ -1246,7 +1290,7 @@ export default function App() {
                           onChange={e => setCustomWeights(e.target.value)}
                           placeholder="e.g.  1 2 4 8 4 2 1"
                           spellCheck={false}
-                          className="w-full h-11 px-3 font-mono text-[13px] bg-transparent border border-white/[0.06] rounded-2xl outline-none text-white placeholder:text-white/20 focus:border-white/20"
+                          className="w-full h-10 px-3 font-mono text-[13px] bg-transparent border border-white/[0.075] rounded-xl outline-none text-white placeholder:text-white/20 focus:border-white/20"
                         />
                         <p className="text-[11px] text-white/30">Space-separated weights — one per blended frame</p>
                       </div>
@@ -1261,27 +1305,27 @@ export default function App() {
                     </div>
                     <div className="flex items-center gap-2">
                       <button type="button" onClick={() => setInterpolateOn(false)}
-                        className={cn("h-10 px-5 rounded-2xl border text-sm font-medium transition-colors",
+                        className={cn("h-10 px-5 rounded-xl border text-sm font-medium transition-colors",
                           !interpolateOn
                             ? "bg-white text-black border-white"
-                            : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]")}>
+                            : "border-white/[0.075] text-white/30 hover:text-white/80 hover:bg-white/[0.03]")}>
                         Off
                       </button>
                       <button type="button" onClick={() => setInterpolateOn(true)}
-                        className={cn("h-10 px-5 rounded-2xl border text-sm font-medium transition-colors",
+                        className={cn("h-10 px-5 rounded-xl border text-sm font-medium transition-colors",
                           interpolateOn
                             ? "bg-white text-black border-white"
-                            : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]")}>
+                            : "border-white/[0.075] text-white/30 hover:text-white/80 hover:bg-white/[0.03]")}>
                         On
                       </button>
                       {interpolateOn && (
                         <div className="anim-fade ml-2 flex items-center gap-2 flex-1">
                           {interpolationPresetFps.map(fps => (
                             <button key={fps} type="button" onClick={() => setInterpolateFpsValue(fps)}
-                              className={cn("h-10 px-3 rounded-2xl border text-sm font-medium transition-colors",
+                              className={cn("h-10 px-3 rounded-xl border text-sm font-medium transition-colors",
                                 interpolateFpsValue === fps
                                   ? "bg-white text-black border-white"
-                                  : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]")}>
+                                  : "border-white/[0.075] text-white/30 hover:text-white/80 hover:bg-white/[0.03]")}>
                               {fps === recommendedInterpolateFps ? `${fps}*` : fps}
                             </button>
                           ))}
@@ -1290,7 +1334,7 @@ export default function App() {
                               type="number" min="1" max="9999"
                               value={interpolateFpsValue}
                               onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v > 0) setInterpolateFpsValue(v); }}
-                              className="w-16 h-10 px-2 text-center font-mono text-[13px] bg-transparent border border-white/[0.06] rounded-2xl outline-none text-white placeholder:text-white/20 focus:border-white/20 tabular-nums"
+                              className="w-16 h-10 px-2 text-center font-mono text-[13px] bg-transparent border border-white/[0.075] rounded-xl outline-none text-white placeholder:text-white/20 focus:border-white/20 tabular-nums"
                             />
                             <span className="text-[12px] text-white/30">fps</span>
                           </div>
@@ -1306,10 +1350,10 @@ export default function App() {
                       {[0.25, 0.5, 1, 2].map((ts) => (
                         <button key={ts} type="button" onClick={() => setRenderTimescale(ts)}
                           className={cn(
-                            "flex-1 h-10 rounded-2xl border text-sm font-medium transition-colors",
+                            "flex-1 h-10 rounded-xl border text-sm font-medium transition-colors",
                             renderTimescale === ts
                               ? "bg-white text-black border-white"
-                              : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
+                              : "border-white/[0.075] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
                           )}>
                           {ts}×
                         </button>
@@ -1319,7 +1363,7 @@ export default function App() {
                           type="number" min="0.05" max="10" step="0.05"
                           value={renderTimescale}
                           onChange={e => { const v = parseFloat(e.target.value); if (!isNaN(v) && v > 0) setRenderTimescale(v); }}
-                          className="w-16 h-10 px-2 text-center font-mono text-[13px] bg-transparent border border-white/[0.06] rounded-2xl outline-none text-white placeholder:text-white/20 focus:border-white/20 tabular-nums"
+                          className="w-16 h-10 px-2 text-center font-mono text-[13px] bg-transparent border border-white/[0.075] rounded-xl outline-none text-white placeholder:text-white/20 focus:border-white/20 tabular-nums"
                         />
                         <span className="text-[12px] text-white/30">×</span>
                       </div>
@@ -1330,7 +1374,7 @@ export default function App() {
                   </div>
 
                   {/* Output quality + encoder */}
-                  <div className="anim-slide-up space-y-4" style={{ animationDelay: "200ms" }}>
+                  <div className="anim-slide-up space-y-3" style={{ animationDelay: "200ms" }}>
                     <p className="text-[12px] font-medium text-white/30">Output</p>
                     <div className="grid grid-cols-2 gap-3">
                       {/* Quality */}
@@ -1344,10 +1388,10 @@ export default function App() {
                           ].map(({ label, crf }) => (
                             <button key={crf} type="button" onClick={() => setRenderCrf(crf)}
                               className={cn(
-                                "flex-1 h-10 rounded-2xl border text-sm font-medium transition-colors",
+                                "flex-1 h-10 rounded-xl border text-sm font-medium transition-colors",
                                 renderCrf === crf
                                   ? "bg-white text-black border-white"
-                                  : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
+                                  : "border-white/[0.075] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
                               )}>
                               {label}
                             </button>
@@ -1364,10 +1408,10 @@ export default function App() {
                           ].map(({ label, id }) => (
                             <button key={id} type="button" onClick={() => setRenderEncoder(id)}
                               className={cn(
-                                "flex-1 h-10 rounded-2xl border text-sm font-medium transition-colors",
+                                "flex-1 h-10 rounded-xl border text-sm font-medium transition-colors",
                                 renderEncoder === id
                                   ? "bg-white text-black border-white"
-                                  : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
+                                  : "border-white/[0.075] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
                               )}>
                               {label}
                             </button>
@@ -1383,8 +1427,7 @@ export default function App() {
                   <div className="flex-1" />
 
                   {/* Render */}
-                  <div className="anim-fade space-y-4" style={{ animationDelay: "200ms" }}>
-                    <div className="border-t border-white/[0.06]" />
+                  <div className="sticky bottom-0 -mx-5 mt-auto space-y-3 border-t border-white/[0.075] bg-[#0b0c0e]/95 px-5 py-4 backdrop-blur-xl" style={{ animationDelay: "200ms" }}>
                     {renderProcessing ? (
                       <div className="space-y-3">
                         <div className="h-1 overflow-hidden rounded-full bg-white/[0.04]">
@@ -1401,7 +1444,7 @@ export default function App() {
                     ) : (
                       <button type="button" onClick={processRender} disabled={!canRender}
                         className={cn(
-                          "w-full h-11 rounded-2xl text-sm font-medium transition-colors",
+                          "w-full h-10 rounded-xl text-sm font-medium transition-colors",
                           canRender
                             ? "bg-white text-black hover:bg-white/90"
                             : "bg-white/5 text-white/20 cursor-not-allowed"
@@ -1425,7 +1468,7 @@ export default function App() {
 
             {!compressFile && (
               <main className="flex-1 flex flex-col overflow-auto">
-                <div className="flex-1 flex flex-col gap-4 p-8">
+                <div className="flex-1 flex flex-col gap-4 p-5">
                   {!ffmpegValid && <FfmpegWarning onClick={() => setView("settings")} />}
                   <DropZone key="empty" isDragOver={isDragOver} onClick={pickCompressVideo}
                     label="Drop video here" hint="or click to browse - MP4, MOV, MKV, AVI..." />
@@ -1435,9 +1478,9 @@ export default function App() {
 
             {!!compressFile && (
               <main className="flex-1 overflow-auto">
-                <div key="filled" className="min-h-full flex flex-col p-8 gap-8">
-                  <div className="anim-slide-up flex items-center gap-4 rounded-[24px] border border-white/[0.06] bg-white/[0.025] p-4">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/[0.06] bg-white/[0.03]">
+                <div key="filled" className="min-h-full flex flex-col p-5 gap-4">
+                  <div className="anim-slide-up flex items-center gap-4 rounded-[14px] border border-white/[0.075] bg-[#111216] p-4">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/[0.075] bg-white/[0.03]">
                       <PiFilmSlateDuotone className="text-[20px] text-white/60" />
                     </div>
                     <div className="min-w-0 flex-1">
@@ -1451,15 +1494,14 @@ export default function App() {
                     </button>
                   </div>
 
-                  <div className="anim-slide-up rounded-[28px] border border-white/[0.06] bg-white/[0.025] p-5 space-y-1.5" style={{ animationDelay: "40ms" }}>
-                    <p className="text-[12px] font-medium text-white/30">What happens</p>
-                    <p className="text-[13px] text-white/60 leading-relaxed">
-                      Re-encodes with constant quality, similar to HandBrake RF. Lower numbers keep more detail, higher numbers make smaller files.
-                      The default is tuned for TikTok-style uploads: clean 1080p H.264, capped to 30 fps, with web-ready metadata.
-                    </p>
+                  <div className="anim-slide-up grid grid-cols-4 overflow-hidden rounded-[14px] border border-white/[0.075] bg-[#111216]" style={{ animationDelay: "35ms" }}>
+                    <StatusCell label="Quality" value={`CRF ${compressQuality}`} />
+                    <StatusCell label="Resolution" value={compressResolution === "source" ? "Source" : `${compressResolution}p`} />
+                    <StatusCell label="FPS" value={compressFps === 0 ? "Source" : `${compressFps}`} />
+                    <StatusCell label="Audio" value={`${compressAudioKbps}k`} />
                   </div>
 
-                  <div className="anim-slide-up space-y-3" style={{ animationDelay: "70ms" }}>
+                  <div className="anim-slide-up space-y-3" style={{ animationDelay: "40ms" }}>
                     <p className="text-[12px] font-medium text-white/30">Preset</p>
                     <div className="grid grid-cols-3 gap-2">
                       {[
@@ -1476,7 +1518,7 @@ export default function App() {
                             setCompressEncoder("libx264");
                             setCompressPreset("slow");
                           }}
-                          className="h-14 rounded-2xl border border-white/[0.06] bg-white/[0.02] text-white/40 transition-colors hover:bg-white/[0.04] hover:text-white/80">
+                          className="h-14 rounded-xl border border-white/[0.075] bg-white/[0.02] text-white/40 transition-colors hover:bg-white/[0.04] hover:text-white/80">
                           <span className="block text-[12px] font-semibold">{preset.label}</span>
                           <span className="mt-1 block text-[10px] opacity-50">{preset.hint}</span>
                         </button>
@@ -1484,7 +1526,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="anim-slide-up grid grid-cols-1 gap-5 lg:grid-cols-2" style={{ animationDelay: "100ms" }}>
+                  <div className="anim-slide-up grid grid-cols-1 gap-4 lg:grid-cols-2" style={{ animationDelay: "70ms" }}>
                     <div className="space-y-3">
                       <div className="flex items-baseline justify-between">
                         <p className="text-[12px] font-medium text-white/30">Quality</p>
@@ -1494,10 +1536,10 @@ export default function App() {
                         {[18, 20, 22, 24].map((value) => (
                           <button key={value} type="button" onClick={() => setCompressQuality(value)}
                             className={cn(
-                              "flex-1 h-10 rounded-2xl border text-sm font-medium transition-colors",
+                              "flex-1 h-10 rounded-xl border text-sm font-medium transition-colors",
                               compressQuality === value
                                 ? "bg-white text-black border-white"
-                                : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
+                                : "border-white/[0.075] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
                             )}>
                             {value}
                           </button>
@@ -1506,7 +1548,7 @@ export default function App() {
                           type="number" min="10" max="32"
                           value={compressQuality}
                           onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 10 && v <= 32) setCompressQuality(v); }}
-                          className="w-16 h-10 px-2 text-center font-mono text-[13px] bg-transparent border border-white/[0.06] rounded-2xl outline-none text-white placeholder:text-white/20 focus:border-white/20 tabular-nums"
+                          className="w-16 h-10 px-2 text-center font-mono text-[13px] bg-transparent border border-white/[0.075] rounded-xl outline-none text-white placeholder:text-white/20 focus:border-white/20 tabular-nums"
                         />
                       </div>
                       <p className="text-[11px] text-white/30">18 is very clean, 20 is a good default, 24 is visibly smaller.</p>
@@ -1522,10 +1564,10 @@ export default function App() {
                         ].map(({ label, id }) => (
                           <button key={id} type="button" onClick={() => setCompressEncoder(id)}
                             className={cn(
-                              "h-10 rounded-2xl border text-sm font-medium transition-colors",
+                              "h-10 rounded-xl border text-sm font-medium transition-colors",
                               compressEncoder === id
                                 ? "bg-white text-black border-white"
-                                : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
+                                : "border-white/[0.075] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
                             )}>
                             {label}
                           </button>
@@ -1544,10 +1586,10 @@ export default function App() {
                         ].map(({ label, id }) => (
                           <button key={id} type="button" onClick={() => setCompressResolution(id)}
                             className={cn(
-                              "h-10 rounded-2xl border text-sm font-medium transition-colors",
+                              "h-10 rounded-xl border text-sm font-medium transition-colors",
                               compressResolution === id
                                 ? "bg-white text-black border-white"
-                                : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
+                                : "border-white/[0.075] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
                             )}>
                             {label}
                           </button>
@@ -1561,10 +1603,10 @@ export default function App() {
                         {[0, 30, 60].map((fps) => (
                           <button key={fps} type="button" onClick={() => setCompressFps(fps)}
                             className={cn(
-                              "flex-1 h-10 rounded-2xl border text-sm font-medium transition-colors",
+                              "flex-1 h-10 rounded-xl border text-sm font-medium transition-colors",
                               compressFps === fps
                                 ? "bg-white text-black border-white"
-                                : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
+                                : "border-white/[0.075] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
                             )}>
                             {fps === 0 ? "Source" : fps}
                           </button>
@@ -1573,7 +1615,7 @@ export default function App() {
                           type="number" min="0" max="240"
                           value={compressFps}
                           onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 0 && v <= 240) setCompressFps(v); }}
-                          className="w-16 h-10 px-2 text-center font-mono text-[13px] bg-transparent border border-white/[0.06] rounded-2xl outline-none text-white placeholder:text-white/20 focus:border-white/20 tabular-nums"
+                          className="w-16 h-10 px-2 text-center font-mono text-[13px] bg-transparent border border-white/[0.075] rounded-xl outline-none text-white placeholder:text-white/20 focus:border-white/20 tabular-nums"
                         />
                       </div>
                     </div>
@@ -1584,10 +1626,10 @@ export default function App() {
                         {(["medium", "slow", "slower"] as CompressPreset[]).map((preset) => (
                           <button key={preset} type="button" onClick={() => setCompressPreset(preset)}
                             className={cn(
-                              "h-10 rounded-2xl border text-sm font-medium capitalize transition-colors",
+                              "h-10 rounded-xl border text-sm font-medium capitalize transition-colors",
                               compressPreset === preset
                                 ? "bg-white text-black border-white"
-                                : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
+                                : "border-white/[0.075] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
                             )}>
                             {preset}
                           </button>
@@ -1601,10 +1643,10 @@ export default function App() {
                         {[96, 128, 160, 192].map((kbps) => (
                           <button key={kbps} type="button" onClick={() => setCompressAudioKbps(kbps)}
                             className={cn(
-                              "h-10 rounded-2xl border text-sm font-medium transition-colors",
+                              "h-10 rounded-xl border text-sm font-medium transition-colors",
                               compressAudioKbps === kbps
                                 ? "bg-white text-black border-white"
-                                : "border-white/[0.06] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
+                                : "border-white/[0.075] text-white/30 hover:text-white/80 hover:bg-white/[0.03]"
                             )}>
                             {kbps}k
                           </button>
@@ -1615,8 +1657,7 @@ export default function App() {
 
                   <div className="flex-1" />
 
-                  <div className="anim-fade space-y-4" style={{ animationDelay: "140ms" }}>
-                    <div className="border-t border-white/[0.06]" />
+                  <div className="sticky bottom-0 -mx-5 mt-auto space-y-3 border-t border-white/[0.075] bg-[#0b0c0e]/95 px-5 py-4 backdrop-blur-xl" style={{ animationDelay: "140ms" }}>
                     {compressProcessing ? (
                       <div className="space-y-3">
                         <div className="h-1 overflow-hidden rounded-full bg-white/[0.04]">
@@ -1633,7 +1674,7 @@ export default function App() {
                     ) : (
                       <button type="button" onClick={compressVideo} disabled={!canCompress}
                         className={cn(
-                          "w-full h-11 rounded-2xl text-sm font-medium transition-colors",
+                          "w-full h-10 rounded-xl text-sm font-medium transition-colors",
                           canCompress
                             ? "bg-white text-black hover:bg-white/90"
                             : "bg-white/5 text-white/20 cursor-not-allowed"
@@ -1656,7 +1697,7 @@ export default function App() {
 
             {!discordFile && (
               <main className="flex-1 flex flex-col overflow-auto">
-                <div className="flex-1 flex flex-col gap-4 p-8">
+                <div className="flex-1 flex flex-col gap-4 p-5">
                   {!ffmpegValid && <FfmpegWarning onClick={() => setView("settings")} />}
                   <DropZone key="empty" isDragOver={isDragOver} onClick={pickDiscordVideo}
                     label="Drop video here" hint="or click to browse · MP4, MOV, MKV, AVI…" />
@@ -1666,11 +1707,11 @@ export default function App() {
 
             {!!discordFile && (<>
               <main className="flex-1 overflow-auto">
-                <div key="filled" className="min-h-full flex flex-col p-8 gap-8">
+                <div key="filled" className="min-h-full flex flex-col p-5 gap-4">
 
                   {/* File card */}
-                  <div className="anim-slide-up flex items-center gap-4 rounded-[24px] border border-white/[0.06] bg-white/[0.025] p-4">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/[0.06] bg-white/[0.03]">
+                  <div className="anim-slide-up flex items-center gap-4 rounded-[14px] border border-white/[0.075] bg-[#111216] p-4">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/[0.075] bg-white/[0.03]">
                       <PiFilmSlateDuotone className="text-[20px] text-white/60" />
                     </div>
 
@@ -1691,22 +1732,16 @@ export default function App() {
                     </button>
                   </div>
 
-                  {/* Info card */}
-                  <div className="anim-slide-up rounded-[28px] border border-white/[0.06] bg-white/[0.025] p-5 space-y-1.5" style={{ animationDelay: "40ms" }}>
-                    <p className="text-[12px] font-medium text-white/30">What happens</p>
-                    <p className="text-[13px] text-white/60 leading-relaxed">
-                      Calculates the exact bitrate needed to fit the video under{" "}
-                      <span className="font-semibold text-white">8 MB</span>, then re-encodes with{" "}
-                      <span className="font-mono text-white/80 text-[12px] bg-white/5 px-1.5 py-0.5 rounded-md">libx264</span> using a fast preset.
-                      Resolution is scaled down automatically if the bitrate gets too low.
-                    </p>
+                  <div className="anim-slide-up grid grid-cols-3 overflow-hidden rounded-[14px] border border-white/[0.075] bg-[#111216]" style={{ animationDelay: "40ms" }}>
+                    <StatusCell label="Target" value="8 MB" />
+                    <StatusCell label="Video" value="H.264" />
+                    <StatusCell label="Preset" value="Veryfast" />
                   </div>
 
                   <div className="flex-1" />
 
                   {/* Compress */}
-                  <div className="anim-fade space-y-4" style={{ animationDelay: "100ms" }}>
-                    <div className="border-t border-white/[0.06]" />
+                  <div className="sticky bottom-0 -mx-5 mt-auto space-y-3 border-t border-white/[0.075] bg-[#0b0c0e]/95 px-5 py-4 backdrop-blur-xl" style={{ animationDelay: "100ms" }}>
                     {discordProcessing ? (
                       <div className="space-y-3">
                         <div className="h-1 overflow-hidden rounded-full bg-white/[0.04]">
@@ -1723,7 +1758,7 @@ export default function App() {
                     ) : (
                       <button type="button" onClick={compressForDiscord} disabled={!canDiscord}
                         className={cn(
-                          "w-full h-11 rounded-2xl text-sm font-medium transition-colors",
+                          "w-full h-10 rounded-xl text-sm font-medium transition-colors",
                           canDiscord
                             ? "bg-white text-black hover:bg-white/90"
                             : "bg-white/5 text-white/20 cursor-not-allowed"
@@ -1743,13 +1778,14 @@ export default function App() {
         {/* ─ Settings ─ */}
         {view === "settings" && (
           <>
+            <Header {...VIEW_META.settings} />
             <main className="flex-1 overflow-auto">
-              <div className="mx-auto grid w-full max-w-7xl grid-cols-1 gap-5 p-4 sm:p-6 lg:p-8 xl:grid-cols-[minmax(0,1fr)_360px]">
+              <div className="mx-auto grid w-full max-w-7xl grid-cols-1 gap-5 p-4 sm:p-6 lg:p-6 xl:grid-cols-[minmax(0,1fr)_360px]">
 
                 {/* left */}
                 <div className="space-y-6">
-                  <div className="rounded-[24px] border border-white/[0.06] bg-white/[0.025]">
-                    <div className="border-b border-white/[0.06] px-5 py-5 sm:px-7 sm:py-6">
+                  <div className="rounded-[14px] border border-white/[0.075] bg-[#111216]">
+                    <div className="border-b border-white/[0.075] px-5 py-5 sm:px-7 sm:py-6">
                       <p className="text-[15px] font-medium text-white">
                         FFmpeg executable
                       </p>
@@ -1763,10 +1799,10 @@ export default function App() {
                       <div className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
                         <input type="text" value={ffmpegPath} onChange={e => saveFfmpegPath(e.target.value)}
                           placeholder="C:\path\to\ffmpeg.exe" spellCheck={false}
-                          className={cn("h-11 min-w-0 rounded-2xl border bg-white/[0.02] border-white/[0.06] px-4 font-mono text-[13px] text-white outline-none placeholder:text-white/20 transition-colors focus:border-white/20",
-                            ffmpegValid === false ? "border-destructive/50" : "border-white/[0.06]")} />
+                          className={cn("h-10 min-w-0 rounded-xl border bg-white/[0.02] border-white/[0.075] px-4 font-mono text-[13px] text-white outline-none placeholder:text-white/20 transition-colors focus:border-white/20",
+                            ffmpegValid === false ? "border-destructive/50" : "border-white/[0.075]")} />
                         <button type="button" onClick={pickFfmpeg}
-                          className="flex h-11 items-center justify-center gap-1.5 rounded-2xl border border-white/[0.06] bg-white/[0.025] px-5 text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white sm:justify-start">
+                          className="flex h-10 items-center justify-center gap-1.5 rounded-xl border border-white/[0.075] bg-[#111216] px-5 text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white sm:justify-start">
                           <PiFolderOpenDuotone className="text-base" />Browse
                         </button>
                         <span className="hidden size-11 place-items-center sm:grid">
@@ -1783,8 +1819,8 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="rounded-[24px] border border-white/[0.06] bg-white/[0.025]">
-                    <div className="border-b border-white/[0.06] px-5 py-5 sm:px-7 sm:py-6">
+                  <div className="rounded-[14px] border border-white/[0.075] bg-[#111216]">
+                    <div className="border-b border-white/[0.075] px-5 py-5 sm:px-7 sm:py-6">
                       <p className="text-[15px] font-medium text-white">
                         Account
                       </p>
@@ -1805,7 +1841,7 @@ export default function App() {
                             <p className="mt-1 truncate text-sm text-white/45">{authSession.email}</p>
                           </div>
                           <button type="button" onClick={logoutAuth}
-                            className="h-11 shrink-0 rounded-2xl border border-white/[0.06] bg-white/[0.025] px-5 text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white">
+                            className="h-10 shrink-0 rounded-xl border border-white/[0.075] bg-[#111216] px-5 text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white">
                             Log out
                           </button>
                         </div>
@@ -1816,43 +1852,93 @@ export default function App() {
                             <p className="mt-1 text-sm text-white/35">Log in to verify your subscription.</p>
                           </div>
                           <button type="button" onClick={() => openUrl("https://xype.gg/login")}
-                            className="h-11 shrink-0 rounded-2xl bg-white px-5 text-sm font-medium text-black transition-colors hover:bg-white/90">
+                            className="h-10 shrink-0 rounded-xl bg-white px-5 text-sm font-medium text-black transition-colors hover:bg-white/90">
                             Log in
                           </button>
                         </div>
                       )}
                     </div>
                   </div>
+
+                  <div className="rounded-[14px] border border-white/[0.075] bg-[#111216]">
+                    <div className="border-b border-white/[0.075] px-5 py-5 sm:px-7 sm:py-6">
+                      <p className="text-[15px] font-medium text-white">
+                        Discord Rich Presence
+                      </p>
+
+                      <p className="mt-1 text-sm text-white/35">
+                        Show xype as your current Discord activity.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-7">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-white/[0.075] bg-white/[0.03] text-white/65">
+                          <SiDiscord className="text-[17px]" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-[14px] font-medium text-white/80">
+                            {discordPresenceEnabled ? "Presence enabled" : "Presence disabled"}
+                          </p>
+                          <p className={cn(
+                            "mt-1 text-[12px]",
+                            discordPresenceStatus === "connected" && "text-emerald-400/80",
+                            discordPresenceStatus === "error" && "text-destructive",
+                            discordPresenceStatus !== "connected" && discordPresenceStatus !== "error" && "text-white/35"
+                          )}>
+                            {discordPresenceStatus === "connected"
+                              ? "Connected to Discord."
+                              : discordPresenceStatus === "error"
+                                ? "Discord is not connected or the client ID is missing."
+                                : discordPresenceStatus === "loading"
+                                  ? "Checking Discord..."
+                                  : "Discord activity will stay hidden."}
+                          </p>
+                        </div>
+                      </div>
+
+                      <button type="button"
+                        onClick={() => setDiscordPresenceEnabled(!discordPresenceEnabled)}
+                        className={cn(
+                          "flex h-10 w-full shrink-0 items-center justify-center rounded-xl border px-5 text-sm font-medium transition-colors sm:w-[112px]",
+                          discordPresenceEnabled
+                            ? "border-white bg-white text-black hover:bg-white/90"
+                            : "border-white/[0.075] bg-[#111216] text-white/70 hover:bg-white/[0.05] hover:text-white"
+                        )}>
+                        {discordPresenceEnabled ? "On" : "Off"}
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 {/* right */}
                 <div className="space-y-6">
-                  <div className="rounded-[24px] border border-white/[0.06] bg-white/[0.025] p-5 space-y-4 sm:p-6">
-                    <div className="flex items-center justify-between gap-4 border-b border-white/[0.06] pb-4">
+                  <div className="rounded-[14px] border border-white/[0.075] bg-[#111216] p-5 space-y-3">
+                    <div className="flex items-center justify-between gap-4 border-b border-white/[0.075] pb-4">
                       <div>
                         <p className="text-[15px] font-medium text-white">Updates</p>
                         <p className="mt-0.5 text-[12px] text-white/35">Keep xype up to date</p>
                       </div>
-                      <span className="text-[12px] text-white/30 font-mono bg-white/[0.04] px-2.5 py-1 rounded-full border border-white/[0.06]">{appVersion ? `v${appVersion}` : ""}</span>
+                      <span className="text-[12px] text-white/30 font-mono bg-white/[0.04] px-2.5 py-1 rounded-full border border-white/[0.075]">{appVersion ? `v${appVersion}` : ""}</span>
                     </div>
 
                     {/* Status card */}
                     {updateStatus === "checking" && (
-                      <div className="anim-fade flex items-center gap-2.5 px-4 py-3 rounded-2xl border border-white/[0.06] bg-white/[0.01]">
+                      <div className="anim-fade flex items-center gap-2.5 px-4 py-3 rounded-xl border border-white/[0.075] bg-white/[0.01]">
                         <PiSpinnerGapBold className="animate-spin text-white/30 shrink-0" />
                         <span className="text-sm text-white/60">Checking for updates…</span>
                       </div>
                     )}
 
                     {updateStatus === "uptodate" && (
-                      <div className="anim-fade flex items-center gap-2.5 px-4 py-3 rounded-2xl border border-white/[0.06] bg-white/[0.01]">
+                      <div className="anim-fade flex items-center gap-2.5 px-4 py-3 rounded-xl border border-white/[0.075] bg-white/[0.01]">
                         <PiCheckCircleFill className="text-emerald-500 shrink-0" />
                         <span className="text-sm text-white/60">You're on the latest version.</span>
                       </div>
                     )}
 
                     {updateStatus === "available" && updateInfo && (
-                      <div className="anim-slide-down rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4 space-y-3">
+                      <div className="anim-slide-down rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 space-y-3">
                         <div className="flex items-start gap-2.5">
                           <PiDownloadSimpleDuotone className="text-emerald-400 text-lg shrink-0 mt-0.5" />
                           <div className="flex-1 min-w-0">
@@ -1863,14 +1949,14 @@ export default function App() {
                           </div>
                         </div>
                         <button type="button" onClick={doInstallUpdate}
-                          className="w-full h-11 rounded-2xl bg-white text-sm font-medium text-black transition-colors hover:bg-white/90">
+                          className="w-full h-10 rounded-xl bg-white text-sm font-medium text-black transition-colors hover:bg-white/90">
                           Download &amp; Install
                         </button>
                       </div>
                     )}
 
                     {updateStatus === "downloading" && (
-                      <div className="anim-fade rounded-2xl border border-white/[0.06] bg-white/[0.01] p-4 space-y-3">
+                      <div className="anim-fade rounded-xl border border-white/[0.075] bg-white/[0.01] p-4 space-y-3">
                         <div className="flex items-center justify-between">
                           <span className="text-sm text-white/60">Downloading update…</span>
                           <span className="text-[12px] font-mono text-white/30 tabular-nums">{updateProgress}%</span>
@@ -1885,13 +1971,13 @@ export default function App() {
                     )}
 
                     {updateStatus === "ready" && (
-                      <div className="anim-slide-down rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4 space-y-3">
+                      <div className="anim-slide-down rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 space-y-3">
                         <div className="flex items-center gap-2.5">
                           <PiCheckCircleFill className="text-emerald-400 shrink-0" />
                           <p className="text-sm text-emerald-400 font-medium">Update installed. Restart to apply.</p>
                         </div>
                         <button type="button" onClick={() => relaunch()}
-                          className="w-full h-11 rounded-2xl bg-white text-sm font-medium text-black transition-colors hover:bg-white/90 flex items-center justify-center gap-2">
+                          className="w-full h-10 rounded-xl bg-white text-sm font-medium text-black transition-colors hover:bg-white/90 flex items-center justify-center gap-2">
                           <PiArrowCounterClockwiseDuotone className="text-base" />
                           Restart now
                         </button>
@@ -1899,14 +1985,14 @@ export default function App() {
                     )}
 
                     {updateStatus === "error" && (
-                      <div className="anim-fade rounded-2xl border border-destructive/20 bg-destructive/5 px-4 py-3">
+                      <div className="anim-fade rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3">
                         <p className="text-sm text-destructive">{updateError || "Update check failed. Try again later."}</p>
                       </div>
                     )}
 
                     {(updateStatus === "idle" || updateStatus === "uptodate" || updateStatus === "error") && (
                       <button type="button" onClick={doCheckUpdate}
-                        className="w-full h-11 rounded-2xl border border-white/[0.06] bg-white/[0.025] px-5 text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white flex items-center justify-center gap-1.5">
+                        className="w-full h-10 rounded-xl border border-white/[0.075] bg-[#111216] px-5 text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white flex items-center justify-center gap-1.5">
                         <PiArrowsClockwiseDuotone className="text-base" />
                         Check for updates
                       </button>
@@ -1932,7 +2018,7 @@ export default function App() {
 
       {appAccess === false && (
         <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black/80 backdrop-blur-md">
-          <div className="rounded-[28px] border border-white/[0.06] bg-white/[0.025] p-7 text-center max-w-sm space-y-5 shadow-2xl">
+          <div className="rounded-[20px] border border-white/[0.075] bg-[#111216] p-7 text-center max-w-sm space-y-5 shadow-2xl">
             <div className="space-y-2">
               <p className="text-lg font-medium text-white">Access required</p>
               <p className="text-sm text-white/40 leading-relaxed">
@@ -1946,7 +2032,7 @@ export default function App() {
             </div>
             <div className="flex gap-3 justify-center">
               <button type="button" onClick={() => openUrl("https://xype.gg/login")}
-                className="h-11 rounded-2xl bg-white px-5 text-sm font-medium text-black transition-colors hover:bg-white/90"
+                className="h-10 rounded-xl bg-white px-5 text-sm font-medium text-black transition-colors hover:bg-white/90"
               >
                 Log in
               </button>
@@ -1957,7 +2043,7 @@ export default function App() {
                   setAccessError(res.error || "");
                 } catch { setAppAccess(false); setAccessError("Check failed"); }
               }}
-                className="h-11 rounded-2xl border border-white/[0.06] bg-white/[0.025] px-5 text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white"
+                className="h-10 rounded-xl border border-white/[0.075] bg-[#111216] px-5 text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white"
               >
                 Retry
               </button>
@@ -1973,7 +2059,7 @@ export default function App() {
 function FfmpegWarning({ onClick }: { onClick: () => void }) {
   return (
     <button type="button" onClick={onClick}
-      className="anim-slide-down shrink-0 w-full flex items-center gap-3 px-4 py-3 rounded-2xl border border-white/[0.06] bg-white/[0.02] text-left group hover:bg-white/[0.04] transition-colors duration-200">
+      className="anim-slide-down shrink-0 w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-white/[0.075] bg-white/[0.02] text-left group hover:bg-white/[0.04] transition-colors duration-200">
       <span className="text-white/30">
         <PiWarningCircleDuotone className="text-base shrink-0" />
       </span>
@@ -1985,13 +2071,22 @@ function FfmpegWarning({ onClick }: { onClick: () => void }) {
   );
 }
 
+function StatusCell({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="min-w-0 border-r border-white/[0.055] px-4 py-3 last:border-r-0">
+      <p className="text-[10px] font-medium text-white/25">{label}</p>
+      <p className="mt-1 truncate text-[12px] font-medium text-white/70 tabular-nums">{value}</p>
+    </div>
+  );
+}
+
 // ── Result banner ──
 function ResultBanner({ result }: { result: ProcessResult }) {
   return (
-    <div className={cn("anim-slide-up rounded-2xl border px-4 py-3 text-[13px] transition-all",
+    <div className={cn("anim-slide-up rounded-xl border px-3.5 py-3 text-[13px] transition-all",
       result.success
-        ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-400"
-        : "border-destructive/20 bg-destructive/5 text-destructive")}>
+        ? "border-emerald-400/20 bg-emerald-400/[0.045] text-emerald-300"
+        : "border-destructive/20 bg-destructive/[0.045] text-destructive")}>
       <p className="font-medium">{result.message}</p>
       {result.output_path && (
         <p className="mt-1 font-mono text-[11px] opacity-60 break-all">{result.output_path}</p>
@@ -2015,11 +2110,11 @@ function ExportSuccessModal({ data, onClose, onReveal }: {
       onClick={onClose}
     >
       <div
-        className="anim-scale-in bg-black border border-white/[0.06] rounded-[28px] p-6 w-[420px] shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto"
+        className="anim-scale-in w-[420px] max-h-[90vh] space-y-3 overflow-y-auto rounded-[20px] border border-white/[0.08] bg-[#0d0e11] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.45),inset_0_1px_0_rgba(255,255,255,0.04)]"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-start gap-3.5">
-          <div className="w-8 h-8 rounded-xl bg-emerald-500/10 flex items-center justify-center shrink-0">
+          <div className="w-8 h-8 rounded-lg bg-emerald-400/10 flex items-center justify-center shrink-0">
             <PiCheckCircleFill className="text-emerald-400 text-lg" />
           </div>
           <div className="flex-1 min-w-0 pt-0.5">
@@ -2031,7 +2126,7 @@ function ExportSuccessModal({ data, onClose, onReveal }: {
         </div>
 
         {videoSrc && (
-          <div className="rounded-[20px] overflow-hidden border border-white/[0.06] bg-black">
+          <div className="rounded-xl overflow-hidden border border-white/[0.08] bg-black">
             <video
               src={videoSrc}
               controls
@@ -2045,14 +2140,14 @@ function ExportSuccessModal({ data, onClose, onReveal }: {
           <button
             type="button"
             onClick={onReveal}
-            className="flex-1 h-11 rounded-2xl border border-white/[0.06] bg-white/[0.025] px-5 text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.05] hover:text-white"
+            className="flex-1 h-10 rounded-xl border border-white/[0.08] bg-white/[0.035] px-5 text-sm font-medium text-white/70 transition-colors hover:bg-white/[0.06] hover:text-white"
           >
             Open Location
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 h-11 rounded-2xl bg-white px-5 text-sm font-medium text-black transition-colors hover:bg-white/90"
+            className="flex-1 h-10 rounded-xl bg-white px-5 text-sm font-medium text-black transition-colors hover:bg-white/90"
           >
             OK
           </button>
@@ -2079,24 +2174,24 @@ function DropZone({
       type="button"
       onClick={onClick}
       className={cn(
-        'group relative flex min-h-[360px] w-full flex-1 flex-col items-center justify-center overflow-hidden rounded-[32px] border transition-all duration-300',
+        'group relative flex min-h-[260px] w-full flex-1 flex-col items-center justify-center overflow-hidden rounded-[14px] border border-dashed transition-[transform,background-color,border-color] duration-200 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.998]',
         isDragOver
-          ? 'border-white/[0.12] bg-white/[0.05]'
-          : 'border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.03]'
+          ? 'border-white/[0.18] bg-white/[0.055]'
+          : 'border-white/[0.075] bg-[#101115] hover:border-white/[0.12] hover:bg-[#131419]'
       )}
     >
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.04),transparent_60%)] opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+      <div className="absolute inset-x-10 top-0 h-px bg-white/[0.08] opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
 
-      <div className="relative flex h-16 w-16 items-center justify-center rounded-[22px] border border-white/[0.06] bg-white/[0.03]">
-        <PiFilmSlateDuotone className="text-[28px] text-white/70" />
+      <div className="relative flex h-10 w-10 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.035] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+        <PiFilmSlateDuotone className="text-[20px] text-white/70" />
       </div>
 
-      <div className="relative mt-8 text-center">
-        <p className="text-[17px] font-medium tracking-[-0.03em] text-white">
+      <div className="relative mt-4 text-center">
+        <p className="text-[14px] font-medium tracking-[-0.015em] text-white/90">
           {isDragOver ? 'Release to load' : label}
         </p>
 
-        <p className="mt-3 max-w-[34ch] text-sm leading-7 text-white/35">
+        <p className="mt-1.5 max-w-[34ch] text-[12px] leading-5 text-white/35">
           {hint}
         </p>
       </div>
@@ -2149,10 +2244,10 @@ function Timeline({ duration, currentTime, segments, pendingIn, videoRef }: {
     <div
       ref={barRef}
       onMouseDown={onMouseDown}
-      className="relative h-11 rounded-2xl overflow-visible cursor-pointer"
+      className="relative h-10 rounded-xl overflow-visible cursor-pointer"
       style={{ userSelect: "none" }}
     >
-      <div className="absolute inset-0 rounded-2xl bg-white/[0.04] border border-white/[0.06]" />
+      <div className="absolute inset-0 rounded-xl bg-white/[0.04] border border-white/[0.075]" />
 
       {segments.map((seg) => {
         const inPct = duration > 0 ? (seg.inPoint / duration) * 100 : 0;
@@ -2195,19 +2290,19 @@ function Header({
   sub?: string
 }) {
   return (
-    <header className="flex h-16 shrink-0 items-center justify-between border-b border-white/[0.06] bg-white/[0.02] px-7 backdrop-blur-xl">
-      <div className="flex items-center gap-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/[0.06] bg-white/[0.03] text-white/70">
+    <header className="flex h-14 shrink-0 items-center justify-between border-b border-white/[0.07] bg-[#0d0e11]/95 px-6">
+      <div className="flex items-center gap-2.5">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.07] bg-white/[0.035] text-[17px] text-white/65">
           {icon}
         </div>
 
         <div>
-          <p className="text-[15px] font-medium tracking-[-0.02em] text-white">
+          <p className="text-[14px] font-medium tracking-[-0.015em] text-white/90">
             {title}
           </p>
 
           {sub && (
-            <p className="mt-0.5 text-[12px] text-white/30">
+            <p className="mt-0.5 text-[11px] text-white/30">
               {sub}
             </p>
           )}
@@ -2241,20 +2336,23 @@ function SidebarItem({
       onClick={disabled ? undefined : onClick}
       aria-disabled={disabled}
       className={cn(
-        'group relative flex h-11 w-full items-center rounded-2xl px-3 transition-all duration-200',
+        'group relative flex h-8 w-full items-center rounded-lg px-2 transition-[transform,background-color,color] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.985]',
         disabled
           ? 'cursor-not-allowed text-white/20'
           : active
-          ? 'bg-white/[0.06] text-white'
-          : 'text-white/35 hover:bg-white/[0.03] hover:text-white/80'
+          ? 'bg-[#15161a] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
+          : 'text-white/40 hover:bg-white/[0.04] hover:text-white/80'
       )}
     >
-      <span className="grid h-5 w-5 place-items-center text-[18px]">
+      {active && !disabled && (
+        <span className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-white/65" />
+      )}
+      <span className="grid h-5 w-5 place-items-center text-[16px]">
         {icon}
       </span>
 
       {!collapsed && (
-        <span className="ml-3 text-[14px] font-medium tracking-[-0.01em] flex-1 flex items-center justify-between">
+        <span className="ml-2 flex flex-1 items-center justify-between text-[12px] font-medium tracking-[-0.005em]">
           {children}
         </span>
       )}
