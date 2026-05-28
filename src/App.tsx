@@ -1584,7 +1584,7 @@ export default function App() {
 
                     {updateStatus === "error" && (
                       <div className="anim-fade rounded-2xl border border-destructive/20 bg-destructive/5 px-4 py-3">
-                        <p className="text-sm text-destructive">Update check failed. Try again later.</p>
+                        <p className="text-sm text-destructive">{updateError || "Update check failed. Try again later."}</p>
                       </div>
                     )}
 
