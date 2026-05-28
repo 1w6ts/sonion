@@ -687,6 +687,7 @@ export default function App() {
     : 360;
   const interpolationPresetFps = Array.from(new Set([recommendedInterpolateFps, 360, 480, 960]));
   const cleanFileName = cleanFile.split(/[\\/]/).pop() ?? "";
+  const trimFileName = trimFile.split(/[\\/]/).pop() ?? "";
   const renderFileName = renderFile.split(/[\\/]/).pop() ?? "";
   const discordFileName = discordFile.split(/[\\/]/).pop() ?? "";
   const compressFileName = compressFile.split(/[\\/]/).pop() ?? "";
