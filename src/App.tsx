@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { getCurrentWebviewWindow, WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { check as checkUpdate, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { cn } from "@/lib/utils";
@@ -45,8 +45,6 @@ const VIEW_META: Record<Exclude<View, "home">, { title: string; sub?: string; ic
   render: { title: "Motion Blur", sub: "Frame Blending", icon: <PiFilmReelDuotone /> },
   settings: { title: "Settings", icon: <PiGearSixDuotone /> },
 };
-
-const isEditorRoute = window.location.hash === "#/editor";
 
 export default function App() {
   const [view, setView] = useState<View>("home");
@@ -212,7 +210,6 @@ export default function App() {
   }, [appAccess]);
 
   useEffect(() => {
-    if (isEditorRoute) return;
     let unlisten: (() => void) | undefined;
     getCurrentWebviewWindow()
       .onDragDropEvent((e) => {
@@ -584,7 +581,6 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (isEditorRoute) return;
     let unlisten: (() => void) | undefined;
 
     invoke<LaunchContext | null>("get_initial_launch_context")
@@ -638,35 +634,6 @@ export default function App() {
     try { await invoke("reveal_in_explorer", { path }); } catch (e) { console.error(e); }
   };
 
-  const openEditorWindow = async () => {
-    const existing = await WebviewWindow.getByLabel("xype-editor");
-    if (existing) {
-      await existing.setFocus();
-      await existing.maximize();
-      return;
-    }
-
-    const editorUrl = `${window.location.href.split("#")[0]}#/editor`;
-    const editorWindow = new WebviewWindow("xype-editor", {
-      url: editorUrl,
-      title: "Xype Editor BETA",
-      width: 1440,
-      height: 900,
-      minWidth: 1100,
-      minHeight: 720,
-      maximized: true,
-      decorations: true,
-      visible: true,
-    });
-    editorWindow.once("tauri://created", () => {
-      void editorWindow.maximize();
-      void editorWindow.setFocus();
-    });
-    editorWindow.once("tauri://error", (event) => {
-      console.error("Editor window failed:", event.payload);
-    });
-  };
-
   const canRender = !!ffmpegValid && !!renderFile && renderInputFps !== null && !renderProcessing && motionRuntimeInstalled === true;
   const canClean = !!cleanFile && !cleanProcessing;
   const canDiscord = !!ffmpegValid && !!discordFile && !discordProcessing;
@@ -681,27 +648,6 @@ export default function App() {
   const compressFileName = compressFile.split(/[\\/]/).pop() ?? "";
   const renderWorkingFps = interpolateOn && interpolateFpsValue > 0 ? interpolateFpsValue : (renderInputFps ?? renderOutputFps);
   const renderFramesBlended = Math.max(1, Math.round(renderWorkingFps / renderOutputFps * blurAmount));
-
-  if (isEditorRoute) {
-    return (
-      <div className="flex h-screen overflow-hidden bg-[#191919] text-white antialiased">
-        <Editor
-          ffmpegPath={ffmpegPath}
-          ffmpegValid={ffmpegValid}
-          isDragOver={isDragOver}
-          onOpenSettings={() => undefined}
-          onSuccess={(message, outputPath) => setSuccessModal({ message, outputPath })}
-        />
-        {successModal && (
-          <ExportSuccessModal
-            data={successModal}
-            onClose={() => setSuccessModal(null)}
-            onReveal={() => { revealInExplorer(successModal.outputPath); setSuccessModal(null); }}
-          />
-        )}
-      </div>
-    );
-  }
 
   return (
     <div className="relative flex h-screen overflow-hidden bg-[#0b0c0e] text-white antialiased">
@@ -915,31 +861,18 @@ export default function App() {
           </>
         )}
 
-        {/* Editor */}
+        {/* Lossless Trim */}
         {view === "trim" && (
           <>
             <Header {...VIEW_META.trim} />
-            <main className="flex-1 overflow-auto">
-              <div className="flex min-h-full flex-col p-5">
-                {!ffmpegValid && <FfmpegWarning onClick={() => setView("settings")} />}
-                <div className="flex flex-1 items-center justify-center">
-                  <div className="w-full max-w-[620px] border border-white/[0.075] bg-[#111216] p-5">
-                    <div className="flex items-center gap-3">
-                      <div className="grid h-10 w-10 place-items-center border border-white/[0.075] bg-white/[0.035] text-white/65">
-                        <PiScissorsDuotone className="text-xl" />
-                      </div>
-                      <div>
-                        <p className="text-[15px] font-medium text-white/90">Xype Editor BETA</p>
-                        <p className="mt-1 text-[12px] text-white/40">Opens in a dedicated AE-style workspace for TikTok edits.</p>
-                      </div>
-                    </div>
-                    <button type="button" onClick={() => void openEditorWindow()}
-                      className="mt-5 h-10 w-full bg-white text-[13px] font-medium text-black transition-colors hover:bg-white/90">
-                      Open Editor Window
-                    </button>
-                  </div>
-                </div>
-              </div>
+            <main className="min-h-0 flex-1 overflow-hidden">
+              <Editor
+                ffmpegPath={ffmpegPath}
+                ffmpegValid={ffmpegValid}
+                isDragOver={isDragOver}
+                onOpenSettings={() => setView("settings")}
+                onSuccess={(message, outputPath) => setSuccessModal({ message, outputPath })}
+              />
             </main>
           </>
         )}

@@ -2102,26 +2102,52 @@ fn register_windows_video_context_menu() {
         return;
     };
     let exe = exe.to_string_lossy();
-    let root = r"HKCU\Software\Classes\SystemFileAssociations\video\shell\Xype";
-    let shell = format!(r"{}\shell", root);
+    let supported_extensions = ["mp4", "mov", "mkv", "avi", "webm", "m4v"];
+    let applies_to = supported_extensions
+        .iter()
+        .map(|ext| format!(r#"System.FileExtension:=".{}""#, ext))
+        .collect::<Vec<_>>()
+        .join(" OR ");
 
-    reg_add_value(root, Some("MUIVerb"), "Xype");
-    reg_add_value(root, Some("Icon"), &exe);
-    reg_add_value(root, Some("SubCommands"), "");
-
-    let entries = [
-        ("open", "Open in Xype", "open"),
-        ("compress", "Compress", "compress"),
-        ("motion-blur", "Motion Blur", "motion-blur"),
+    let mut roots = vec![
+        r"HKCU\Software\Classes\*\shell\Xype".to_string(),
+        r"HKCU\Software\Classes\SystemFileAssociations\video\shell\Xype".to_string(),
     ];
 
-    for (key, label, action) in entries {
-        let item = format!(r"{}\{}", shell, key);
-        let command = format!(r"{}\command", item);
-        let command_value = format!("\"{}\" --xype-action {} \"%1\"", exe, action);
-        reg_add_value(&item, Some("MUIVerb"), label);
-        reg_add_value(&item, Some("Icon"), &exe);
-        reg_add_value(&command, None, &command_value);
+    roots.extend(supported_extensions.iter().map(|ext| {
+        format!(
+            r"HKCU\Software\Classes\SystemFileAssociations\.{}\shell\Xype",
+            ext
+        )
+    }));
+
+    for root in roots {
+        let shell = format!(r"{}\shell", root);
+
+        reg_add_value(&root, None, "Send to xype");
+        reg_add_value(&root, Some("MUIVerb"), "Send to xype");
+        reg_add_value(&root, Some("Icon"), &exe);
+        reg_add_value(&root, Some("SubCommands"), "");
+
+        if root == r"HKCU\Software\Classes\*\shell\Xype" {
+            reg_add_value(&root, Some("AppliesTo"), &applies_to);
+        }
+
+        let entries = [
+            ("motion-blur", "Motion Blur", "motion-blur"),
+            ("discord", "Discord Compress", "discord"),
+            ("compress", "Compress", "compress"),
+        ];
+
+        for (key, label, action) in entries {
+            let item = format!(r"{}\{}", shell, key);
+            let command = format!(r"{}\command", item);
+            let command_value = format!("\"{}\" --xype-action {} \"%1\"", exe, action);
+            reg_add_value(&item, None, label);
+            reg_add_value(&item, Some("MUIVerb"), label);
+            reg_add_value(&item, Some("Icon"), &exe);
+            reg_add_value(&command, None, &command_value);
+        }
     }
 }
 

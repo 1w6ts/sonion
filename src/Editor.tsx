@@ -5,56 +5,36 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { cn } from "@/lib/utils";
 import {
   PiArrowClockwiseDuotone,
-  PiCaretDownBold,
-  PiCursorDuotone,
+  PiCaretLeftFill,
+  PiCaretRightFill,
+  PiCheckCircleFill,
+  PiExportDuotone,
   PiFolderOpenDuotone,
   PiFloppyDiskDuotone,
-  PiHandPalmDuotone,
-  PiMagnifyingGlassDuotone,
-  PiMusicNotesDuotone,
   PiPauseFill,
   PiPlayFill,
-  PiPlusBold,
   PiScissorsDuotone,
   PiSpinnerGapBold,
-  PiTrashDuotone,
   PiVideoCameraDuotone,
-  PiExportDuotone,
+  PiWarningCircleDuotone,
 } from "react-icons/pi";
-
-type MediaKind = "video" | "audio";
 
 interface ProcessResult { success: boolean; message: string; output_path?: string; }
 
-interface EditorAsset {
+interface CutSegment {
   id: string;
-  path: string;
   name: string;
-  src: string;
-  duration: number;
-  kind: MediaKind;
-}
-
-interface EditorClip {
-  id: string;
-  assetId: string;
-  sourcePath: string;
-  name: string;
-  kind: MediaKind;
-  sourceIn: number;
-  sourceOut: number;
   start: number;
-  layer: number;
-  color: string;
+  end: number;
 }
 
-interface EditorProject {
+interface CutProject {
   app: "xype";
-  format: "xype-editor-project";
+  format: "xype-lossless-cut-project";
   version: 1;
   name: string;
-  assets: EditorAsset[];
-  clips: EditorClip[];
+  inputPath: string;
+  segments: CutSegment[];
 }
 
 interface EditorProps {
@@ -66,24 +46,35 @@ interface EditorProps {
 }
 
 const VIDEO_EXTS = ["mp4", "mov", "mkv", "avi", "webm", "m4v"];
-const AUDIO_EXTS = ["mp3", "wav", "aac", "m4a", "flac", "ogg"];
-const COLORS = ["#87d6ff", "#9ff2b4", "#ffd166", "#ff9fb2", "#cbb6ff", "#f4a261"];
-const LAYERS = [4, 3, 2, 1];
+const MIN_SEGMENT = 0.05;
 
-const fmt = (t: number) => {
-  if (!Number.isFinite(t) || t < 0) return "0:00.0";
-  const m = Math.floor(t / 60);
-  const s = (t % 60).toFixed(1).padStart(4, "0");
-  return `${m}:${s}`;
-};
-
+const makeId = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const nameFromPath = (path: string) => path.split(/[\\/]/).pop() ?? path;
 const extFromPath = (path: string) => (path.split(".").pop() ?? "").toLowerCase();
-const clipLen = (clip: EditorClip) => Math.max(0.1, clip.sourceOut - clip.sourceIn);
-const makeId = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
-const probeDuration = (src: string, kind: MediaKind) => new Promise<number>((resolve) => {
-  const media = document.createElement(kind === "video" ? "video" : "audio");
+const fmt = (time: number, precise = true) => {
+  if (!Number.isFinite(time) || time < 0) return precise ? "00:00:00.000" : "0:00";
+  const hours = Math.floor(time / 3600);
+  const minutes = Math.floor((time % 3600) / 60);
+  const seconds = Math.floor(time % 60);
+  const millis = Math.floor((time % 1) * 1000);
+  if (!precise) return hours > 0 ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}` : `${minutes}:${String(seconds).padStart(2, "0")}`;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(millis).padStart(3, "0")}`;
+};
+
+const parseTime = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return 0;
+  if (!trimmed.includes(":")) return Number(trimmed) || 0;
+  const parts = trimmed.split(":").map(Number).filter(Number.isFinite);
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  return Number(trimmed) || 0;
+};
+
+const probeDuration = (src: string) => new Promise<number>((resolve) => {
+  const media = document.createElement("video");
   media.preload = "metadata";
   media.onloadedmetadata = () => resolve(Number.isFinite(media.duration) ? media.duration : 0);
   media.onerror = () => resolve(0);
@@ -91,193 +82,156 @@ const probeDuration = (src: string, kind: MediaKind) => new Promise<number>((res
 });
 
 export default function Editor({ ffmpegPath, ffmpegValid, isDragOver, onOpenSettings, onSuccess }: EditorProps) {
-  const [projectName, setProjectName] = useState("Untitled TikTok");
+  const [projectName, setProjectName] = useState("Untitled cut");
   const [projectPath, setProjectPath] = useState("");
-  const [assets, setAssets] = useState<EditorAsset[]>([]);
-  const [clips, setClips] = useState<EditorClip[]>([]);
-  const [selectedAssetId, setSelectedAssetId] = useState("");
-  const [selectedClipId, setSelectedClipId] = useState("");
-  const [activeLayer, setActiveLayer] = useState(1);
+  const [inputPath, setInputPath] = useState("");
+  const [source, setSource] = useState("");
+  const [duration, setDuration] = useState(0);
+  const [segments, setSegments] = useState<CutSegment[]>([]);
+  const [selectedSegmentId, setSelectedSegmentId] = useState("");
   const [currentTime, setCurrentTime] = useState(0);
+  const [markIn, setMarkIn] = useState(0);
+  const [markOut, setMarkOut] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [pendingIn, setPendingIn] = useState<number | null>(null);
   const [processing, setProcessing] = useState(false);
   const [status, setStatus] = useState("");
-  const [draggingAssetId, setDraggingAssetId] = useState("");
-  const [draggingClipId, setDraggingClipId] = useState("");
-  const [openMenu, setOpenMenu] = useState<"file" | "edit" | null>(null);
-  const previewRef = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
-  const selectedAsset = assets.find(asset => asset.id === selectedAssetId) ?? assets[0];
-  const selectedClip = clips.find(clip => clip.id === selectedClipId);
-  const duration = Math.max(10, ...clips.map(clip => clip.start + clipLen(clip)));
-  const sortedClips = useMemo(() => [...clips].sort((a, b) => a.start - b.start || a.layer - b.layer), [clips]);
+  const selectedSegment = segments.find(segment => segment.id === selectedSegmentId);
+  const sortedSegments = useMemo(() => [...segments].sort((a, b) => a.start - b.start || a.end - b.end), [segments]);
+  const totalKept = useMemo(() => segments.reduce((sum, segment) => sum + Math.max(0, segment.end - segment.start), 0), [segments]);
+  const canExport = Boolean(ffmpegValid && inputPath && segments.length > 0 && !processing);
 
-  const importFiles = useCallback(async (paths: string[]) => {
-    const next = paths.filter(path => {
-      const ext = extFromPath(path);
-      return VIDEO_EXTS.includes(ext) || AUDIO_EXTS.includes(ext);
-    }).filter(path => !assets.some(asset => asset.path === path));
-
-    const imported = await Promise.all(next.map(async (path) => {
-      const ext = extFromPath(path);
-      const kind: MediaKind = VIDEO_EXTS.includes(ext) ? "video" : "audio";
-      const src = convertFileSrc(path);
-      return {
-        id: makeId(),
-        path,
-        name: nameFromPath(path),
-        src,
-        kind,
-        duration: await probeDuration(src, kind),
-      };
-    }));
-
-    if (imported.length === 0) return;
-    setAssets(prev => [...prev, ...imported]);
-    setSelectedAssetId(imported[0].id);
-    setStatus(`${imported.length} item${imported.length === 1 ? "" : "s"} imported`);
-  }, [assets]);
-
-  const pickMedia = async () => {
-    const sel = await open({
-      multiple: true,
-      filters: [{ name: "Video and audio", extensions: [...VIDEO_EXTS, ...AUDIO_EXTS] }],
-    });
-    if (typeof sel === "string") void importFiles([sel]);
-    else if (Array.isArray(sel)) void importFiles(sel);
+  const resetInput = () => {
+    setInputPath("");
+    setSource("");
+    setDuration(0);
+    setSegments([]);
+    setSelectedSegmentId("");
+    setCurrentTime(0);
+    setMarkIn(0);
+    setMarkOut(0);
+    setPlaying(false);
+    setProjectPath("");
+    setProjectName("Untitled cut");
+    setStatus("");
   };
 
-  const addAssetToTimeline = (asset = selectedAsset, startOverride?: number, layerOverride?: number) => {
-    if (!asset) return;
-    const targetLayer = layerOverride ?? activeLayer;
-    const layerClips = clips.filter(clip => clip.layer === targetLayer);
-    const start = layerClips.reduce((max, clip) => Math.max(max, clip.start + clipLen(clip)), 0);
-    const id = makeId();
-    setClips(prev => [...prev, {
-      id,
-      assetId: asset.id,
-      sourcePath: asset.path,
-      name: asset.name,
-      kind: asset.kind,
-      sourceIn: 0,
-      sourceOut: Math.max(0.1, asset.duration || 1),
-      start: startOverride ?? start,
-      layer: targetLayer,
-      color: COLORS[prev.length % COLORS.length],
-    }]);
-    setSelectedClipId(id);
+  const updateSelectedRange = (start: number, end: number) => {
+    if (!selectedSegmentId) return;
+    setSegments(prev => prev.map(segment => segment.id === selectedSegmentId ? { ...segment, start, end } : segment));
   };
 
-  const addDraggedAsset = (event: React.DragEvent, start: number, layer: number) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const assetId = event.dataTransfer.getData("application/x-xype-asset") || draggingAssetId;
-    const asset = assets.find(item => item.id === assetId);
-    if (!asset) return;
-    addAssetToTimeline(asset, Math.max(0, start), Math.max(1, Math.min(4, layer)));
-    setDraggingAssetId("");
+  const updateMarkIn = (time: number) => {
+    const next = clamp(time, 0, Math.max(0, markOut - MIN_SEGMENT));
+    setMarkIn(next);
+    updateSelectedRange(next, markOut);
   };
 
-  const splitSelectedClip = () => {
-    if (!selectedClip) return;
-    const local = currentTime - selectedClip.start;
-    if (local <= 0.05 || local >= clipLen(selectedClip) - 0.05) return;
-    const splitSource = selectedClip.sourceIn + local;
-    const right: EditorClip = {
-      ...selectedClip,
-      id: makeId(),
-      sourceIn: splitSource,
-      start: currentTime,
-    };
-    setClips(prev => prev.map(clip =>
-      clip.id === selectedClip.id ? { ...clip, sourceOut: splitSource } : clip
-    ).concat(right));
-    setSelectedClipId(right.id);
+  const updateMarkOut = (time: number) => {
+    const next = clamp(time, markIn + MIN_SEGMENT, duration);
+    setMarkOut(next);
+    updateSelectedRange(markIn, next);
   };
 
-  const markIn = () => setPendingIn(currentTime);
-  const markOut = () => {
-    if (!selectedAsset || pendingIn === null || currentTime <= pendingIn) return;
-    const id = makeId();
-    setClips(prev => [...prev, {
-      id,
-      assetId: selectedAsset.id,
-      sourcePath: selectedAsset.path,
-      name: selectedAsset.name,
-      kind: selectedAsset.kind,
-      sourceIn: pendingIn,
-      sourceOut: currentTime,
-      start: clips.reduce((max, clip) => Math.max(max, clip.start + clipLen(clip)), 0),
-      layer: activeLayer,
-      color: COLORS[prev.length % COLORS.length],
-    }]);
-    setPendingIn(null);
-    setSelectedClipId(id);
-  };
-
-  const replaySelection = () => {
-    if (selectedClip) {
-      setCurrentTime(selectedClip.start);
-      setPlaying(true);
+  const loadInput = useCallback(async (path: string) => {
+    const ext = extFromPath(path);
+    if (!VIDEO_EXTS.includes(ext)) {
+      setStatus("Unsupported file type.");
       return;
     }
-    if (selectedAsset?.kind === "video" && previewRef.current) {
-      previewRef.current.src = selectedAsset.src;
-      previewRef.current.currentTime = 0;
-      setPlaying(true);
-      void previewRef.current.play().catch(() => undefined);
-    }
+
+    const src = convertFileSrc(path);
+    const probedDuration = await probeDuration(src);
+    const end = Math.max(probedDuration, MIN_SEGMENT);
+    const wholeFile: CutSegment = { id: makeId(), name: "Segment 1", start: 0, end };
+
+    setInputPath(path);
+    setSource(src);
+    setDuration(end);
+    setCurrentTime(0);
+    setMarkIn(0);
+    setMarkOut(end);
+    setSegments([wholeFile]);
+    setSelectedSegmentId(wholeFile.id);
+    setProjectName(nameFromPath(path).replace(/\.[^.]+$/, ""));
+    setProjectPath("");
+    setStatus(`Loaded ${nameFromPath(path)}`);
+  }, []);
+
+  const pickVideo = async () => {
+    const selection = await open({
+      multiple: false,
+      filters: [{ name: "Video", extensions: VIDEO_EXTS }],
+    });
+    if (typeof selection === "string") void loadInput(selection);
+  };
+
+  const addSegment = () => {
+    if (!inputPath || markOut <= markIn + MIN_SEGMENT) return;
+    const id = makeId();
+    setSegments(prev => [...prev, {
+      id,
+      name: `Segment ${prev.length + 1}`,
+      start: clamp(markIn, 0, duration),
+      end: clamp(markOut, MIN_SEGMENT, duration),
+    }]);
+    setSelectedSegmentId(id);
+  };
+
+  const replaceSelectedWithMarks = () => {
+    if (!selectedSegmentId || markOut <= markIn + MIN_SEGMENT) return;
+    setSegments(prev => prev.map(segment => segment.id === selectedSegmentId ? {
+      ...segment,
+      start: clamp(markIn, 0, duration),
+      end: clamp(markOut, MIN_SEGMENT, duration),
+    } : segment));
+  };
+
+  const splitAtPlayhead = () => {
+    if (!selectedSegment) return;
+    if (currentTime <= selectedSegment.start + MIN_SEGMENT || currentTime >= selectedSegment.end - MIN_SEGMENT) return;
+    const left: CutSegment = { ...selectedSegment, end: currentTime };
+    const right: CutSegment = { ...selectedSegment, id: makeId(), name: `Segment ${segments.length + 1}`, start: currentTime };
+    setSegments(prev => prev.flatMap(segment => segment.id === selectedSegment.id ? [left, right] : [segment]));
+    setSelectedSegmentId(right.id);
+    setMarkIn(right.start);
+    setMarkOut(right.end);
   };
 
   const removeSelected = () => {
-    if (!selectedClipId) return;
-    setClips(prev => prev.filter(clip => clip.id !== selectedClipId));
-    setSelectedClipId("");
+    if (!selectedSegmentId) return;
+    setSegments(prev => prev.filter(segment => segment.id !== selectedSegmentId));
+    setSelectedSegmentId("");
   };
 
-  const nudgeSelected = (delta: number) => {
-    if (!selectedClipId) return;
-    setClips(prev => prev.map(clip =>
-      clip.id === selectedClipId ? { ...clip, start: Math.max(0, clip.start + delta) } : clip
-    ));
+  const selectSegment = (segment: CutSegment) => {
+    setSelectedSegmentId(segment.id);
+    setMarkIn(segment.start);
+    setMarkOut(segment.end);
+    seek(segment.start);
   };
 
-  const moveClip = (id: string, start: number, layer: number) => {
-    setClips(prev => prev.map(clip =>
-      clip.id === id ? { ...clip, start: Math.max(0, start), layer: Math.max(1, Math.min(4, layer)) } : clip
-    ));
-    setSelectedClipId(id);
-    setCurrentTime(Math.max(0, start));
-  };
-
-  const setSelectedLayer = (layer: number) => {
-    if (!selectedClipId) {
-      setActiveLayer(layer);
-      return;
+  const seek = (time: number) => {
+    const next = clamp(time, 0, duration || 0);
+    setCurrentTime(next);
+    if (videoRef.current && Math.abs(videoRef.current.currentTime - next) > 0.005) {
+      videoRef.current.currentTime = next;
     }
-    setClips(prev => prev.map(clip => clip.id === selectedClipId ? { ...clip, layer } : clip));
   };
 
-  const trimSelected = (edge: "in" | "out", delta: number) => {
-    if (!selectedClipId) return;
-    setClips(prev => prev.map(clip => {
-      if (clip.id !== selectedClipId) return clip;
-      if (edge === "in") {
-        const nextIn = Math.max(0, Math.min(clip.sourceIn + delta, clip.sourceOut - 0.1));
-        return { ...clip, sourceIn: nextIn, start: Math.max(0, clip.start + (nextIn - clip.sourceIn)) };
-      }
-      return { ...clip, sourceOut: Math.max(clip.sourceIn + 0.1, clip.sourceOut + delta) };
-    }));
-  };
+  const jump = (delta: number) => seek(currentTime + delta);
+  const setInAtPlayhead = () => updateMarkIn(currentTime);
+  const setOutAtPlayhead = () => updateMarkOut(currentTime);
 
   const saveProject = async () => {
+    if (!inputPath) return;
     const path = projectPath || await save({
       defaultPath: `${projectName.replace(/[\\/:*?"<>|]/g, "-")}.son`,
-      filters: [{ name: "Xype Project", extensions: ["son"] }],
+      filters: [{ name: "Xype Cut Project", extensions: ["son"] }],
     });
     if (!path) return;
-    const project: EditorProject = { app: "xype", format: "xype-editor-project", version: 1, name: projectName, assets, clips };
+    const project: CutProject = { app: "xype", format: "xype-lossless-cut-project", version: 1, name: projectName, inputPath, segments };
     await invoke("save_editor_project", { path, contents: JSON.stringify(project, null, 2) });
     setProjectPath(path);
     setStatus(`Saved ${nameFromPath(path)}`);
@@ -287,37 +241,40 @@ export default function Editor({ ffmpegPath, ffmpegValid, isDragOver, onOpenSett
     const path = await open({ multiple: false, filters: [{ name: "Xype Project", extensions: ["son"] }] });
     if (typeof path !== "string") return;
     const contents = await invoke<string>("load_editor_project", { path });
-    const project = JSON.parse(contents) as EditorProject;
-    setProjectName(project.name || "Untitled TikTok");
-    setAssets(project.assets.map(asset => ({ ...asset, src: convertFileSrc(asset.path) })));
-    setClips(project.clips);
+    const project = JSON.parse(contents) as CutProject;
+    if (project.format !== "xype-lossless-cut-project") {
+      setStatus("This editor now opens lossless cut projects only.");
+      return;
+    }
+    const src = convertFileSrc(project.inputPath);
+    const probedDuration = await probeDuration(src);
+    setProjectName(project.name || "Untitled cut");
     setProjectPath(path);
-    setSelectedAssetId(project.assets[0]?.id ?? "");
-    setSelectedClipId("");
+    setInputPath(project.inputPath);
+    setSource(src);
+    setDuration(Math.max(probedDuration, ...project.segments.map(segment => segment.end), MIN_SEGMENT));
+    setSegments(project.segments);
+    setSelectedSegmentId(project.segments[0]?.id ?? "");
+    setMarkIn(project.segments[0]?.start ?? 0);
+    setMarkOut(project.segments[0]?.end ?? probedDuration);
+    setCurrentTime(project.segments[0]?.start ?? 0);
     setStatus(`Opened ${nameFromPath(path)}`);
   };
 
-  const exportProject = async () => {
-    if (!ffmpegValid || clips.length === 0) return;
+  const exportSegments = async () => {
+    if (!canExport) return;
     setProcessing(true);
     setStatus("");
     try {
-      const res = await invoke<ProcessResult>("export_editor_project", {
+      const res = await invoke<ProcessResult>("export_segments", {
         ffmpegPath,
-        projectName,
-        clips: sortedClips.map(clip => ({
-          inputPath: clip.sourcePath,
-          kind: clip.kind,
-          start: clip.sourceIn,
-          end: clip.sourceOut,
-          timelineStart: clip.start,
-          layer: clip.layer,
-        })),
+        inputPath,
+        segments: sortedSegments.map(segment => ({ start: segment.start, end: segment.end })),
       });
       if (res.success && res.output_path) onSuccess(res.message, res.output_path);
       else setStatus(res.message);
-    } catch (e) {
-      setStatus(`Export failed: ${e}`);
+    } catch (error) {
+      setStatus(`Export failed: ${error}`);
     } finally {
       setProcessing(false);
     }
@@ -326,10 +283,30 @@ export default function Editor({ ffmpegPath, ffmpegValid, isDragOver, onOpenSett
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     getCurrentWebviewWindow().onDragDropEvent((event) => {
-      if (event.payload.type === "drop") void importFiles(event.payload.paths);
+      if (event.payload.type === "drop" && event.payload.paths[0]) void loadInput(event.payload.paths[0]);
     }).then(fn => { unlisten = fn; });
     return () => unlisten?.();
-  }, [importFiles]);
+  }, [loadInput]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const onTimeUpdate = () => setCurrentTime(video.currentTime);
+    const onEnded = () => setPlaying(false);
+    video.addEventListener("timeupdate", onTimeUpdate);
+    video.addEventListener("ended", onEnded);
+    return () => {
+      video.removeEventListener("timeupdate", onTimeUpdate);
+      video.removeEventListener("ended", onEnded);
+    };
+  }, [source]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (playing) void video.play().catch(() => setPlaying(false));
+    else video.pause();
+  }, [playing]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -340,388 +317,320 @@ export default function Editor({ ffmpegPath, ffmpegValid, isDragOver, onOpenSett
         setPlaying(prev => !prev);
       } else if (event.code === "KeyI") {
         event.preventDefault();
-        markIn();
+        setInAtPlayhead();
       } else if (event.code === "KeyO") {
         event.preventDefault();
-        markOut();
+        setOutAtPlayhead();
       } else if (event.code === "KeyB") {
         event.preventDefault();
-        splitSelectedClip();
-      } else if (event.code === "Home") {
+        splitAtPlayhead();
+      } else if (event.code === "KeyA") {
         event.preventDefault();
-        setCurrentTime(selectedClip?.start ?? 0);
-      } else if (event.code === "Enter") {
-        event.preventDefault();
-        replaySelection();
+        addSegment();
       } else if (event.code === "Delete" || event.code === "Backspace") {
         event.preventDefault();
         removeSelected();
       } else if (event.code === "ArrowLeft") {
         event.preventDefault();
-        selectedClipId ? nudgeSelected(event.shiftKey ? -1 : -0.1) : setCurrentTime(t => Math.max(0, t - (event.shiftKey ? 1 : 0.1)));
+        jump(event.shiftKey ? -1 : -0.04);
       } else if (event.code === "ArrowRight") {
         event.preventDefault();
-        selectedClipId ? nudgeSelected(event.shiftKey ? 1 : 0.1) : setCurrentTime(t => Math.min(duration, t + (event.shiftKey ? 1 : 0.1)));
-      } else if (event.code === "BracketLeft") {
-        event.preventDefault();
-        trimSelected("in", event.shiftKey ? -0.1 : 0.1);
-      } else if (event.code === "BracketRight") {
-        event.preventDefault();
-        trimSelected("out", event.shiftKey ? 0.1 : -0.1);
-      } else if (mod && event.code === "KeyS") {
-        event.preventDefault();
-        void saveProject();
+        jump(event.shiftKey ? 1 : 0.04);
       } else if (mod && event.code === "KeyO") {
         event.preventDefault();
         void loadProject();
+      } else if (mod && event.code === "KeyS") {
+        event.preventDefault();
+        void saveProject();
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   });
 
-  useEffect(() => {
-    if (!playing) return;
-    const id = window.setInterval(() => setCurrentTime(t => Math.min(duration, t + 0.05)), 50);
-    return () => window.clearInterval(id);
-  }, [playing, duration]);
-
-  useEffect(() => {
-    const current = sortedClips.find(clip => clip.kind === "video" && currentTime >= clip.start && currentTime <= clip.start + clipLen(clip));
-    if (!previewRef.current) return;
-    if (!current) {
-      previewRef.current.pause();
-      previewRef.current.removeAttribute("src");
-      previewRef.current.load();
-      if (playing && currentTime >= duration) setPlaying(false);
-      return;
-    }
-    const asset = assets.find(item => item.id === current.assetId);
-    if (!asset) return;
-    if (previewRef.current.src !== asset.src) previewRef.current.src = asset.src;
-    const targetTime = current.sourceIn + currentTime - current.start;
-    if (Math.abs(previewRef.current.currentTime - targetTime) > 0.15) previewRef.current.currentTime = targetTime;
-    if (playing) void previewRef.current.play().catch(() => undefined);
-    else previewRef.current.pause();
-  }, [assets, currentTime, duration, playing, sortedClips]);
-
   return (
-    <main className="relative flex-1 overflow-hidden bg-[#191919]">
-      {isDragOver && <div className="pointer-events-none absolute inset-2 z-40 border border-dashed border-[#4d8fe8] bg-[#4d8fe8]/10" />}
-      <div className="flex h-8 items-center gap-1 border-b border-black bg-[#111216] px-2 text-[#b8b8b8]">
-        <MenuButton label="File" open={openMenu === "file"} onOpen={() => setOpenMenu(openMenu === "file" ? null : "file")}
-          items={[
-            { label: "Import Media", shortcut: "Ctrl+I", icon: <PiPlusBold />, action: pickMedia },
-            { label: "Open Project", shortcut: "Ctrl+O", icon: <PiFolderOpenDuotone />, action: loadProject },
-            { label: "Save Project", shortcut: "Ctrl+S", icon: <PiFloppyDiskDuotone />, action: () => void saveProject() },
-            { label: "Export TikTok", shortcut: "", icon: <PiExportDuotone />, action: exportProject },
-          ]} />
-        <MenuButton label="Edit" open={openMenu === "edit"} onOpen={() => setOpenMenu(openMenu === "edit" ? null : "edit")}
-          items={[
-            { label: "Split Layer", shortcut: "B", icon: <PiScissorsDuotone />, action: splitSelectedClip },
-            { label: "Delete Layer", shortcut: "Del", icon: <PiTrashDuotone />, action: removeSelected },
-            { label: "Replay Selection", shortcut: "Enter", icon: <PiArrowClockwiseDuotone />, action: replaySelection },
-          ]} />
-        <span className="mx-1 h-4 w-px bg-white/10" />
-        <ToolGlyph active icon={<PiCursorDuotone />} title="Selection" />
-        <ToolGlyph icon={<PiHandPalmDuotone />} title="Hand" />
-        <ToolGlyph icon={<PiMagnifyingGlassDuotone />} title="Zoom" />
-        <ToolGlyph icon={<PiScissorsDuotone />} title="Blade / Split" onClick={splitSelectedClip} />
-        <div className="ml-auto flex items-center gap-2 text-[11px]">
-          <span className="border border-white/[0.075] bg-white/[0.035] px-2 py-0.5 text-white/65">Xype Editor</span>
-          <span className="text-white/35">{projectPath ? nameFromPath(projectPath) : "Unsaved Project"}</span>
-        </div>
-      </div>
-      <div className="grid h-[calc(100%-2rem)] grid-cols-[232px_minmax(0,1fr)_248px] grid-rows-[minmax(0,1fr)_236px]">
-        <aside className="border-r border-white/[0.075] bg-[#0d0e11]"
-          onDragOver={(event) => event.preventDefault()}
-          onDrop={(event) => {
-            event.preventDefault();
-            const files = Array.from(event.dataTransfer.files).map(file => (file as File & { path?: string }).path).filter((path): path is string => !!path);
-            if (files.length > 0) void importFiles(files);
-            setDraggingAssetId("");
-          }}>
-          <PanelHeader title="Project" value={projectPath ? nameFromPath(projectPath) : "unsaved"} />
-          <div className="flex gap-1 border-b border-white/[0.075] p-2">
-            <IconButton title="Import" onClick={pickMedia}><PiPlusBold /></IconButton>
-            <IconButton title="Open .son" onClick={loadProject}><PiFolderOpenDuotone /></IconButton>
-            <IconButton title="Save .son" onClick={() => void saveProject()}><PiFloppyDiskDuotone /></IconButton>
+    <main className="relative flex h-full min-h-0 flex-1 overflow-hidden bg-[#0b0c0e] text-white">
+      {isDragOver && <div className="pointer-events-none absolute inset-3 z-40 rounded-[16px] border border-dashed border-white/35 bg-white/10" />}
+
+      <section className="flex min-w-0 flex-1 flex-col">
+        <div className="relative m-3 mb-0 flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[16px] border border-white/[0.075] bg-black">
+          <div className="absolute left-3 top-3 z-20 flex max-w-[calc(100%-1.5rem)] items-center gap-1.5 rounded-xl border border-white/[0.075] bg-[#111216]/92 p-1 shadow-xl shadow-black/30 backdrop-blur-xl">
+            <button type="button" onClick={pickVideo} className="lc-tool-button"><PiFolderOpenDuotone />Open</button>
+            <button type="button" onClick={() => void loadProject()} className="lc-tool-button"><PiFolderOpenDuotone />Project</button>
+            <button type="button" onClick={() => void saveProject()} disabled={!inputPath} className="lc-tool-button disabled:opacity-30"><PiFloppyDiskDuotone />Save</button>
+            <input value={projectName} onChange={event => setProjectName(event.target.value)}
+              className="ml-1 h-7 w-56 min-w-0 rounded-lg border border-white/[0.075] bg-black/25 px-2 text-[12px] font-medium text-white/70 outline-none" />
           </div>
-          <div className="space-y-1 p-2">
-            {assets.map(asset => (
-              <button key={asset.id} type="button" draggable
-                onDragStart={(event) => {
-                  event.dataTransfer.setData("application/x-xype-asset", asset.id);
-                  event.dataTransfer.setData("text/plain", asset.id);
-                  event.dataTransfer.effectAllowed = "copy";
-                  setDraggingAssetId(asset.id);
+
+            {source ? (
+              <video ref={videoRef} src={source} playsInline preload="metadata" disablePictureInPicture
+                onLoadedMetadata={(event) => {
+                  const next = Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : duration;
+                  const nextDuration = Math.max(next, MIN_SEGMENT);
+                  setDuration(nextDuration);
+                  if (markOut <= MIN_SEGMENT) {
+                    setMarkIn(0);
+                    setMarkOut(nextDuration);
+                    updateSelectedRange(0, nextDuration);
+                  }
                 }}
-                onDragEnd={() => setDraggingAssetId("")}
-                onClick={() => setSelectedAssetId(asset.id)}
-                onDoubleClick={() => addAssetToTimeline(asset)}
-                className={cn("group flex w-full cursor-grab items-center gap-2 border px-2 py-1.5 text-left active:cursor-grabbing", selectedAssetId === asset.id ? "border-white/20 bg-white/[0.08]" : "border-white/[0.055] bg-white/[0.025] hover:bg-white/[0.05]")}>
-                <span className="grid h-7 w-7 shrink-0 place-items-center rounded bg-black/30 text-white/50">{asset.kind === "video" ? <PiVideoCameraDuotone /> : <PiMusicNotesDuotone />}</span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[12px] font-medium text-white/75">{asset.name}</span>
-                  <span className="font-mono text-[10px] text-white/30">{fmt(asset.duration)}</span>
+                className="h-full w-full object-contain" />
+            ) : (
+              <button type="button" onClick={pickVideo}
+                className="grid h-44 w-[360px] place-items-center rounded-[14px] border border-dashed border-white/20 bg-white/[0.025] text-center text-[13px] text-white/55 hover:border-white/40 hover:text-white">
+                <span>
+                  <PiVideoCameraDuotone className="mx-auto mb-3 text-4xl text-white/70" />
+                  Drop a video or open one
                 </span>
               </button>
-            ))}
-            {!assets.length && (
-              <div className="mt-3 border border-dashed border-[#3a3a3a] bg-[#151515] p-4 text-center text-[12px] text-[#858585]">
-                Drop footage here, then drag it into Composition or Timeline.
-              </div>
             )}
-          </div>
-        </aside>
+        </div>
 
-        <section className="flex min-w-0 flex-col border-r border-white/[0.075] bg-black">
-          <div className="flex h-9 shrink-0 items-center gap-2 border-b border-white/[0.075] bg-[#0d0e11] px-3">
-            <input value={projectName} onChange={e => setProjectName(e.target.value)}
-              className="h-7 min-w-0 flex-1 bg-transparent text-[13px] font-medium text-white/80 outline-none" />
-            <span className="bg-white px-1.5 py-0.5 text-[10px] font-bold text-black">BETA</span>
-          </div>
-          <div className={cn("relative flex min-h-0 flex-1 items-center justify-center", draggingAssetId && "outline outline-1 outline-[#4d8fe8]/70")}
-            onDragOver={(event) => {
-              if (draggingAssetId) event.preventDefault();
-            }}
-            onDrop={(event) => addDraggedAsset(event, currentTime, activeLayer)}>
-            <video ref={previewRef} muted playsInline preload="metadata" disablePictureInPicture className="h-full w-full object-contain" />
-            {!assets.length && (
-              <div className="absolute grid grid-cols-2 gap-16">
-                <button type="button" onClick={pickMedia}
-                  className="grid h-28 w-40 place-items-center border border-[#3a3a3a] bg-[#0c0c0c] text-[13px] text-[#c8c8c8] hover:border-[#4d8fe8] hover:text-white">
-                  New Composition
-                </button>
-                <button type="button" onClick={pickMedia}
-                  className="grid h-28 w-40 place-items-center border border-[#3a3a3a] bg-[#0c0c0c] text-center text-[13px] text-[#c8c8c8] hover:border-[#4d8fe8] hover:text-white">
-                  New Composition<br />From Footage
-                </button>
-              </div>
-            )}
-            {assets.length > 0 && clips.length === 0 && (
-              <div className="pointer-events-none absolute bottom-5 border border-dashed border-[#4d8fe8]/60 bg-[#0c0c0c]/90 px-4 py-2 text-[12px] text-[#b8cfff]">
-                Drag footage from Project into this Composition or the Timeline.
-              </div>
-            )}
-          </div>
-          <div className="flex h-10 shrink-0 items-center gap-1.5 border-t border-white/[0.075] bg-[#0d0e11] px-2">
-            <IconButton title="Play/Pause" onClick={() => setPlaying(prev => !prev)}>{playing ? <PiPauseFill /> : <PiPlayFill />}</IconButton>
-            <IconButton title="Replay selected clip (Enter)" onClick={replaySelection}><PiArrowClockwiseDuotone /></IconButton>
-            <IconButton title="Split selected (B)" onClick={splitSelectedClip}><PiScissorsDuotone /></IconButton>
-            <IconButton title="Delete selected" onClick={removeSelected}><PiTrashDuotone /></IconButton>
-            <button type="button" onClick={markIn} className="h-7 border border-white/[0.075] px-2.5 text-[11px] text-white/60 hover:text-white">I</button>
-            <button type="button" onClick={markOut} className="h-7 border border-white/[0.075] px-2.5 text-[11px] text-white/60 hover:text-white">O</button>
-            <span className="font-mono text-[12px] text-white/35">{fmt(currentTime)}</span>
-          </div>
-        </section>
+          <Timeline
+            duration={duration}
+            currentTime={currentTime}
+            markIn={markIn}
+            markOut={markOut}
+            segments={segments}
+            selectedSegmentId={selectedSegmentId}
+            onSeek={seek}
+            onSelect={selectSegment}
+            onSetMarkIn={updateMarkIn}
+            onSetMarkOut={updateMarkOut}
+          />
 
-        <aside className="bg-[#0d0e11]">
-          <PanelHeader title="Effects Controls" value={selectedClip ? selectedClip.name : "no selection"} />
-          <div className="space-y-3 p-3">
-            {!ffmpegValid && (
-              <button type="button" onClick={onOpenSettings} className="w-full rounded-lg border border-amber-400/25 bg-amber-400/10 p-3 text-left text-[12px] text-amber-200">
-                FFmpeg is required for export. Open Settings.
-              </button>
-            )}
-            <div className="border border-white/[0.075] bg-white/[0.025] p-3">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/30">Layer target</p>
-              <div className="mt-2 grid grid-cols-4 gap-1">
-                {[1, 2, 3, 4].map(layer => (
-                  <button key={layer} type="button" onClick={() => setSelectedLayer(layer)}
-                    className={cn("h-7 text-[12px]", (selectedClip?.layer ?? activeLayer) === layer ? "bg-white text-black" : "bg-white/[0.05] text-white/45 hover:text-white")}>
-                    {layer}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {selectedClip && (
-              <div className="border border-white/[0.075] bg-white/[0.025] p-3 text-[12px] text-white/55">
-                <InspectorRow label="Start" value={fmt(selectedClip.start)} />
-                <InspectorRow label="In" value={fmt(selectedClip.sourceIn)} />
-                <InspectorRow label="Out" value={fmt(selectedClip.sourceOut)} />
-                <InspectorRow label="Layer" value={`${selectedClip.layer}`} />
-                <div className="mt-2 grid grid-cols-2 gap-1">
-                  <button type="button" onClick={() => trimSelected("in", 0.1)} className="h-7 bg-white/[0.05] text-[11px] text-white/55 hover:text-white">Trim In</button>
-                  <button type="button" onClick={() => trimSelected("out", -0.1)} className="h-7 bg-white/[0.05] text-[11px] text-white/55 hover:text-white">Trim Out</button>
-                </div>
-              </div>
-            )}
-            <button type="button" onClick={exportProject} disabled={!ffmpegValid || clips.length === 0 || processing}
-              className={cn("h-10 w-full rounded-lg text-[13px] font-medium", ffmpegValid && clips.length > 0 && !processing ? "bg-white text-black hover:bg-white/90" : "bg-white/[0.05] text-white/20")}>
-              {processing ? <span className="flex items-center justify-center gap-2"><PiSpinnerGapBold className="animate-spin" />Exporting</span> : "Export TikTok"}
+        <div className="relative flex h-[78px] shrink-0 items-center justify-center bg-[#0b0c0e]">
+          <div className="absolute left-3 bottom-3 flex items-center gap-2 text-[12px] text-white/85">
+            <span className="grid h-5 w-5 place-items-center rounded-full bg-white/90 text-black text-[11px]">i</span>
+            <span className="text-white/45">Space plays · I/O marks · arrows step</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <TransportButton title="Set in" onClick={setInAtPlayhead} disabled={!inputPath}>I</TransportButton>
+            <IconButton title="Back 1 frame" onClick={() => jump(-0.04)}><PiCaretLeftFill /></IconButton>
+            <button type="button" title="Play/Pause" onClick={() => setPlaying(prev => !prev)}
+              onMouseDown={(event) => event.preventDefault()}
+              className="grid h-11 w-11 place-items-center rounded-full bg-white text-xl text-black shadow-lg shadow-black/30 hover:bg-white/90">
+              {playing ? <PiPauseFill /> : <PiPlayFill className="translate-x-0.5" />}
             </button>
-            {status && <p className="rounded-lg border border-white/[0.075] bg-white/[0.025] p-3 text-[12px] text-white/45">{status}</p>}
+            <IconButton title="Forward 1 frame" onClick={() => jump(0.04)}><PiCaretRightFill /></IconButton>
+            <TransportButton title="Set out" onClick={setOutAtPlayhead} disabled={!inputPath}>O</TransportButton>
           </div>
-        </aside>
+          <div className="absolute right-3 bottom-3 flex items-center gap-1.5">
+            {source && <IconButton title="Close video" onClick={resetInput}>X</IconButton>}
+            <IconButton title="Replay selection" onClick={() => seek(selectedSegment?.start ?? markIn)}><PiArrowClockwiseDuotone /></IconButton>
+            <IconButton title="Split selected" onClick={splitAtPlayhead}><PiScissorsDuotone /></IconButton>
+          </div>
+        </div>
+      </section>
 
-        <section className="col-span-3 border-t border-white/[0.075] bg-[#0d0e11]">
-          <Timeline clips={clips} duration={duration} currentTime={currentTime} selectedClipId={selectedClipId}
-            draggingAssetId={draggingAssetId}
-            draggingClipId={draggingClipId}
-            onSelect={(id) => {
-              setSelectedClipId(id);
-              const clip = clips.find(item => item.id === id);
-              if (clip) setCurrentTime(clip.start);
-            }}
-            onSeek={setCurrentTime}
-            onNudge={nudgeSelected}
-            onDropAsset={addDraggedAsset}
-            onMoveClip={moveClip}
-            onClipDragStart={setDraggingClipId}
-            onClipDragEnd={() => setDraggingClipId("")} />
-        </section>
-      </div>
+      <aside className="m-3 ml-0 flex w-[244px] shrink-0 flex-col overflow-hidden rounded-[16px] border border-white/[0.075] bg-[#111216]">
+        <div className="flex h-10 items-center justify-between border-b border-white/[0.075] px-3">
+          <p className="text-[13px] font-semibold text-white">Segments to export:</p>
+          <button type="button" onClick={removeSelected} disabled={!selectedSegment} className="grid h-7 w-7 place-items-center text-xl text-white/55 hover:text-white disabled:opacity-25">×</button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-2">
+          {sortedSegments.map((segment, index) => (
+            <button key={segment.id} type="button" onClick={() => selectSegment(segment)}
+              className={cn("mb-1.5 w-full rounded-lg border p-2 text-left", selectedSegmentId === segment.id ? "border-white/25 bg-white/[0.08]" : "border-white/[0.075] bg-white/[0.025] hover:bg-white/[0.045]")}>
+              <span className="flex items-center gap-1.5">
+                <span className="grid h-5 min-w-5 place-items-center rounded-md border border-white/10 bg-white/90 px-1 text-[11px] font-bold text-black">{index + 1}</span>
+                <span className="font-mono text-[11px] font-semibold text-white">{fmt(segment.start)} - {fmt(segment.end)}</span>
+              </span>
+              <span className="mt-1 block text-[11px] leading-4 text-white/85">Duration {fmt(segment.end - segment.start)}</span>
+              <span className="block text-[11px] text-white/70">{Math.round((segment.end - segment.start) * 1000)} ms</span>
+            </button>
+          ))}
+          {!segments.length && (
+            <div className="rounded-[3px] border border-dashed border-white/20 p-3 text-[12px] leading-5 text-white/45">
+              Set I and O, then add a segment.
+            </div>
+          )}
+        </div>
+
+        <div className="border-t border-white/[0.075] p-2">
+          <div className="grid grid-cols-2 gap-1.5">
+            <TimeField label="I" value={markIn} max={Math.max(0, markOut - MIN_SEGMENT)} onChange={updateMarkIn} />
+            <TimeField label="O" value={markOut} min={markIn + MIN_SEGMENT} max={duration} onChange={updateMarkOut} />
+            <button type="button" onClick={addSegment} disabled={!inputPath || markOut <= markIn + MIN_SEGMENT}
+              onMouseDown={(event) => event.preventDefault()}
+              className="h-8 rounded-lg bg-white/[0.08] text-xl font-bold text-white hover:bg-white/[0.13] disabled:opacity-30">
+              +
+            </button>
+            <button type="button" onClick={replaceSelectedWithMarks} disabled={!selectedSegment}
+              onMouseDown={(event) => event.preventDefault()}
+              className="h-8 rounded-lg bg-white/[0.08] text-[13px] font-bold text-white hover:bg-white/[0.13] disabled:opacity-30">
+              ✓
+            </button>
+          </div>
+
+          <div className="mt-2 flex items-center justify-between border-t border-white/10 pt-2 text-[12px]">
+            <span className="text-white/75">Segments total:</span>
+            <span className="font-mono text-white">{fmt(totalKept)}</span>
+          </div>
+
+          {!ffmpegValid && (
+            <button type="button" onClick={onOpenSettings} className="mt-2 flex w-full items-center gap-2 rounded-lg border border-amber-400/25 bg-amber-400/10 p-2 text-left text-[12px] text-amber-200">
+              <PiWarningCircleDuotone className="text-base" />
+              FFmpeg required
+            </button>
+          )}
+          {status && (
+            <div className="mt-2 flex items-start gap-2 rounded-lg border border-white/[0.075] bg-white/[0.025] p-2 text-[11px] text-white/62">
+              <PiCheckCircleFill className="mt-0.5 shrink-0 text-white/70" />
+              <span>{status}</span>
+            </div>
+          )}
+          <button type="button" onClick={() => void exportSegments()} disabled={!canExport}
+            className={cn("mt-2 flex h-9 w-full items-center justify-center gap-1.5 rounded-xl text-[14px] font-semibold", canExport ? "bg-white text-black hover:bg-white/90" : "bg-white/10 text-white/25")}>
+            {processing ? <PiSpinnerGapBold className="animate-spin" /> : <PiExportDuotone />}
+            Export
+          </button>
+        </div>
+      </aside>
     </main>
   );
 }
 
-function Timeline({ clips, duration, currentTime, selectedClipId, draggingAssetId, draggingClipId, onSelect, onSeek, onNudge, onDropAsset, onMoveClip, onClipDragStart, onClipDragEnd }: {
-  clips: EditorClip[];
+function Timeline({ duration, currentTime, markIn, markOut, segments, selectedSegmentId, onSeek, onSelect, onSetMarkIn, onSetMarkOut }: {
   duration: number;
   currentTime: number;
-  selectedClipId: string;
-  draggingAssetId: string;
-  draggingClipId: string;
-  onSelect: (id: string) => void;
+  markIn: number;
+  markOut: number;
+  segments: CutSegment[];
+  selectedSegmentId: string;
   onSeek: (time: number) => void;
-  onNudge: (delta: number) => void;
-  onDropAsset: (event: React.DragEvent, start: number, layer: number) => void;
-  onMoveClip: (id: string, start: number, layer: number) => void;
-  onClipDragStart: (id: string) => void;
-  onClipDragEnd: () => void;
+  onSelect: (segment: CutSegment) => void;
+  onSetMarkIn: (time: number) => void;
+  onSetMarkOut: (time: number) => void;
 }) {
-  const width = Math.max(duration, 10);
+  const timelineRef = useRef<HTMLDivElement>(null);
+  const dragModeRef = useRef<"playhead" | "in" | "out" | null>(null);
+  const safeDuration = Math.max(duration, MIN_SEGMENT);
+  const ticks = Math.max(4, Math.min(16, Math.ceil(safeDuration / 10)));
+
+  const timeFromClientX = (clientX: number) => {
+    const rect = timelineRef.current?.getBoundingClientRect();
+    if (!rect) return 0;
+    return clamp(((clientX - rect.left) / rect.width) * safeDuration, 0, safeDuration);
+  };
+
+  const updateDrag = (clientX: number) => {
+    const time = timeFromClientX(clientX);
+    if (dragModeRef.current === "in") {
+      onSetMarkIn(clamp(time, 0, markOut - MIN_SEGMENT));
+      return;
+    }
+    if (dragModeRef.current === "out") {
+      onSetMarkOut(clamp(time, markIn + MIN_SEGMENT, safeDuration));
+      return;
+    }
+    onSeek(time);
+  };
+
+  const beginDrag = (event: React.PointerEvent<HTMLElement>, mode: "playhead" | "in" | "out") => {
+    event.preventDefault();
+    event.stopPropagation();
+    dragModeRef.current = mode;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    updateDrag(event.clientX);
+  };
+
+  const continueDrag = (event: React.PointerEvent<HTMLElement>) => {
+    if (!dragModeRef.current) return;
+    event.preventDefault();
+    updateDrag(event.clientX);
+  };
+
+  const endDrag = (event: React.PointerEvent<HTMLElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    dragModeRef.current = null;
+  };
+
   return (
-    <div className="grid h-full grid-cols-[136px_minmax(0,1fr)] text-[11px]">
-      <div className="border-r border-white/[0.075] bg-[#0d0e11]">
-        <div className="flex h-7 items-center border-b border-white/[0.075] px-3 text-white/35">Layer Name</div>
-        {LAYERS.map(layer => (
-          <div key={layer} className="grid h-12 grid-cols-[24px_1fr] items-center border-b border-white/[0.055] px-2 text-white/45">
-            <span className="text-[#606060]">{layer}</span>
-            <span>Layer {layer}</span>
+    <div className="mx-3 mt-2 h-[46px] shrink-0 overflow-hidden rounded-xl border border-white/[0.075] bg-[#111216]">
+      <div ref={timelineRef}
+        className="relative h-full cursor-ew-resize touch-none select-none overflow-hidden bg-[#3b3938]"
+        onPointerDown={(event) => beginDrag(event, "playhead")}
+        onPointerMove={continueDrag}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}>
+        {Array.from({ length: ticks + 1 }).map((_, index) => (
+          <div key={index} className="absolute top-0 h-full border-l border-white/[0.12]" style={{ left: `${(index / ticks) * 100}%` }}>
+            <span className="sr-only">{fmt((safeDuration / ticks) * index, false)}</span>
           </div>
         ))}
-      </div>
-      <div className="relative overflow-x-auto">
-        <div className="relative min-w-full" style={{ width: `${width * 72}px` }}>
-          <div className="relative h-7 border-b border-white/[0.075] bg-[#111216]" onClick={(e) => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            onSeek(Math.max(0, ((e.clientX - rect.left) / rect.width) * duration));
-          }}>
-            {Array.from({ length: Math.ceil(duration) + 1 }).map((_, i) => (
-              <div key={i} className="absolute top-0 h-full border-l border-white/[0.06] pl-1 pt-1.5 font-mono text-[10px] text-white/25" style={{ left: `${(i / duration) * 100}%` }}>{i}s</div>
-            ))}
-          </div>
-          <div
-            className={cn("relative h-48", (draggingAssetId || draggingClipId) && "bg-[#4d8fe8]/5")}
-            onDragOver={(event) => {
-              if (draggingAssetId || draggingClipId) event.preventDefault();
-            }}
-            onDrop={(event) => {
-              const rect = event.currentTarget.getBoundingClientRect();
-              const start = ((event.clientX - rect.left) / rect.width) * duration;
-              const row = Math.max(0, Math.min(3, Math.floor((event.clientY - rect.top) / 48)));
-              const layer = 4 - row;
-              const clipId = event.dataTransfer.getData("application/x-xype-clip") || draggingClipId;
-              if (clipId) {
-                event.preventDefault();
-                event.stopPropagation();
-                onMoveClip(clipId, start, layer);
-                onClipDragEnd();
-                return;
-              }
-              onDropAsset(event, start, layer);
-            }}>
-            {LAYERS.map(layer => <div key={layer} className="h-12 border-b border-white/[0.055] bg-[linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[length:72px_100%]" />)}
-            {clips.map(clip => (
-              <button key={clip.id} type="button" onClick={() => onSelect(clip.id)} onDoubleClick={() => onNudge(0.25)}
-                draggable
-                onDragStart={(event) => {
-                  event.dataTransfer.setData("application/x-xype-clip", clip.id);
-                  event.dataTransfer.effectAllowed = "move";
-                  onClipDragStart(clip.id);
-                  onSelect(clip.id);
-                }}
-                onDragEnd={onClipDragEnd}
-                className={cn("absolute h-9 overflow-hidden border px-2 text-left shadow-lg", selectedClipId === clip.id ? "border-white bg-white/20" : "border-black/35")}
-                style={{
-                  left: `${(clip.start / duration) * 100}%`,
-                  top: `${(4 - clip.layer) * 48 + 6}px`,
-                  width: `${(clipLen(clip) / duration) * 100}%`,
-                  backgroundColor: `${clip.color}26`,
-                  color: clip.color,
-                }}>
-                <span className="block truncate text-[11px] font-semibold">{clip.name}</span>
-                <span className="font-mono text-[10px] opacity-70">{fmt(clipLen(clip))}</span>
-              </button>
-            ))}
-            <div className="pointer-events-none absolute top-0 h-full w-px bg-white/80" style={{ left: `${(currentTime / duration) * 100}%` }}>
-              <div className="absolute -left-1.5 -top-1 h-3 w-3 rotate-45 bg-white" />
-            </div>
-          </div>
+
+        <div className="absolute inset-y-0 bg-white/[0.12] ring-1 ring-white/25"
+          style={{ left: `${(markIn / safeDuration) * 100}%`, width: `${Math.max(0.25, ((markOut - markIn) / safeDuration) * 100)}%` }} />
+
+        {segments.map(segment => (
+          <button key={segment.id} type="button" onClick={(event) => { event.stopPropagation(); onSelect(segment); }}
+            onPointerDown={(event) => event.stopPropagation()}
+            className={cn("absolute inset-y-0 border-x text-left", selectedSegmentId === segment.id ? "border-white bg-white/18" : "border-white/20 bg-black/5 hover:bg-white/10")}
+            style={{ left: `${(segment.start / safeDuration) * 100}%`, width: `${Math.max(0.4, ((segment.end - segment.start) / safeDuration) * 100)}%` }}>
+            <span className="sr-only">{segment.name}</span>
+          </button>
+        ))}
+
+        <button type="button" title="Drag in marker"
+          onPointerDown={(event) => beginDrag(event, "in")}
+          onPointerMove={continueDrag}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+          className="absolute inset-y-0 w-2 -translate-x-1 border-x border-black/25 bg-white/75" style={{ left: `${(markIn / safeDuration) * 100}%` }} />
+        <button type="button" title="Drag out marker"
+          onPointerDown={(event) => beginDrag(event, "out")}
+          onPointerMove={continueDrag}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+          className="absolute inset-y-0 w-2 -translate-x-1 border-x border-black/25 bg-white/75" style={{ left: `${(markOut / safeDuration) * 100}%` }} />
+
+        <div className="absolute top-0 h-full w-px bg-white" style={{ left: `${(currentTime / safeDuration) * 100}%` }}>
+          <button type="button" title="Drag playhead"
+            onPointerDown={(event) => beginDrag(event, "playhead")}
+            onPointerMove={continueDrag}
+            onPointerUp={endDrag}
+            onPointerCancel={endDrag}
+            className="absolute left-1/2 top-0 h-full w-5 -translate-x-1/2 cursor-ew-resize">
+            <span className="absolute left-1/2 top-0 h-0 w-0 -translate-x-1/2 border-x-[7px] border-t-[9px] border-x-transparent border-t-white" />
+            <span className="absolute left-1/2 top-2 h-[calc(100%-0.5rem)] w-1 -translate-x-1/2 rounded-full bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.35)]" />
+            <span className="sr-only">Drag playhead at {fmt(currentTime)}</span>
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
-function PanelHeader({ title, value }: { title: string; value: string }) {
+function TimeField({ label, value, min = 0, max, onChange }: { label: string; value: number; min?: number; max: number; onChange: (value: number) => void }) {
   return (
-    <div className="border-b border-white/[0.075] px-3 py-2">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/35">{title}</p>
-      <p className="mt-0.5 truncate text-[12px] text-white/55">{value}</p>
-    </div>
+    <label className="block">
+      <span className="mb-1 block text-[10px] uppercase tracking-[0.12em] text-white/45">{label}</span>
+      <input value={fmt(value)} onChange={event => onChange(clamp(parseTime(event.target.value), min, max))}
+        className="h-8 w-full rounded-lg border border-white/[0.075] bg-black/20 px-2 font-mono text-[10px] text-white/80 outline-none" />
+    </label>
   );
 }
 
 function IconButton({ title, onClick, children }: { title: string; onClick: () => void; children: React.ReactNode }) {
   return (
     <button type="button" title={title} onClick={onClick}
-      className="grid h-7 w-7 place-items-center border border-white/[0.075] bg-white/[0.035] text-white/55 hover:bg-white/[0.07] hover:text-white">
+      onMouseDown={(event) => event.preventDefault()}
+      className="grid h-8 w-8 place-items-center rounded-lg border border-white/[0.075] bg-white/[0.045] text-white/65 hover:bg-white/[0.08] hover:text-white">
       {children}
     </button>
   );
 }
 
-function ToolGlyph({ icon, title, active = false, onClick }: { icon: React.ReactNode; title: string; active?: boolean; onClick?: () => void }) {
+function TransportButton({ title, onClick, disabled, children }: { title: string; onClick: () => void; disabled?: boolean; children: React.ReactNode }) {
   return (
-    <button type="button" title={title} onClick={onClick}
-      className={cn("grid h-6 w-7 place-items-center border border-transparent text-[15px]", active ? "border-white/15 bg-white/[0.08] text-white" : "text-white/45 hover:border-white/[0.075] hover:bg-white/[0.04] hover:text-white")}>
-      {icon}
+    <button type="button" title={title} onClick={onClick} disabled={disabled}
+      onMouseDown={(event) => event.preventDefault()}
+      className="grid h-7 min-w-7 place-items-center rounded-lg border border-white/[0.075] bg-white/[0.075] px-2 font-mono text-[12px] font-bold text-white hover:bg-white/[0.12] disabled:opacity-30">
+      {children}
     </button>
   );
-}
-
-function MenuButton({ label, open, onOpen, items }: {
-  label: string;
-  open: boolean;
-  onOpen: () => void;
-  items: Array<{ label: string; shortcut: string; icon: React.ReactNode; action: () => void }>;
-}) {
-  return (
-    <div className="relative">
-      <button type="button" onClick={onOpen}
-        className={cn("flex h-6 items-center gap-1 px-2 text-[12px]", open ? "bg-white/[0.08] text-white" : "text-white/55 hover:bg-white/[0.04] hover:text-white")}>
-        {label}
-        <PiCaretDownBold className="text-[9px] opacity-50" />
-      </button>
-      {open && (
-        <div className="absolute left-0 top-7 z-50 w-52 border border-white/[0.075] bg-[#111216] p-1 shadow-2xl shadow-black/50">
-          {items.map(item => (
-            <button key={item.label} type="button" onClick={() => { onOpen(); item.action(); }}
-              className="flex h-8 w-full items-center gap-2 px-2 text-left text-[12px] text-white/65 hover:bg-white/[0.06] hover:text-white">
-              <span className="grid w-4 place-items-center text-[15px] text-white/45">{item.icon}</span>
-              <span className="flex-1">{item.label}</span>
-              {item.shortcut && <span className="font-mono text-[10px] text-white/25">{item.shortcut}</span>}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function InspectorRow({ label, value }: { label: string; value: string }) {
-  return <div className="flex justify-between border-b border-white/[0.055] py-1.5 last:border-b-0"><span className="text-white/35">{label}</span><span className="font-mono text-white/65">{value}</span></div>;
 }
