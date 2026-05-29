@@ -1,6 +1,6 @@
 [package]
 name = "xype"
-version = "0.3.1"
+version = "0.3.2"
 description = "video multitool"
 authors = ["venator"]
 edition = "2021"

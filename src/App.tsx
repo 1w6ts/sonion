@@ -4,10 +4,11 @@ import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { getCurrentWebviewWindow, WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { check as checkUpdate, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { cn } from "@/lib/utils";
+import Editor from "@/Editor";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { SiDiscord } from "react-icons/si";
 import {
@@ -20,8 +21,6 @@ import {
   PiSpinnerGapBold,
   PiWarningCircleDuotone,
   PiScissorsDuotone,
-  PiPlayFill,
-  PiPauseFill,
   PiSparkleDuotone,
   PiArrowsClockwiseDuotone,
   PiDownloadSimpleDuotone,
@@ -30,7 +29,7 @@ import {
 
 interface ProcessResult { success: boolean; message: string; output_path?: string; }
 interface PublicAuthSession { user_id: string; email: string; expires_at: string; }
-interface Seg { id: string; inPoint: number; outPoint: number; }
+interface LaunchContext { action: "open" | "compress" | "motion-blur" | "discord" | "clean"; path: string; }
 type View = "home" | "clean" | "trim" | "render" | "discord" | "compress" | "settings";
 type CompressEncoder = "libx264" | "libx265" | "h264_nvenc";
 type CompressResolution = "source" | "1080" | "720" | "480";
@@ -47,12 +46,7 @@ const VIEW_META: Record<Exclude<View, "home">, { title: string; sub?: string; ic
   settings: { title: "Settings", icon: <PiGearSixDuotone /> },
 };
 
-const fmt = (t: number) => {
-  if (!isFinite(t) || isNaN(t)) return "0:00.0";
-  const m = Math.floor(t / 60);
-  const s = (t % 60).toFixed(1).padStart(4, "0");
-  return `${m}:${s}`;
-};
+const isEditorRoute = window.location.hash === "#/editor";
 
 export default function App() {
   const [view, setView] = useState<View>("home");
@@ -101,18 +95,6 @@ export default function App() {
   const [cleanFile, setCleanFile] = useState("");
   const [cleanProcessing, setCleanProcessing] = useState(false);
   const [cleanResult, setCleanResult] = useState<ProcessResult | null>(null);
-
-  // ── Trim state ──
-  const [trimFile, setTrimFile] = useState("");
-  const [trimVideoSrc, setTrimVideoSrc] = useState("");
-  const [trimDuration, setTrimDuration] = useState(0);
-  const [trimCurrentTime, setTrimCurrentTime] = useState(0);
-  const [trimSegs, setTrimSegs] = useState<Seg[]>([]);
-  const [trimPendingIn, setTrimPendingIn] = useState<number | null>(null);
-  const [trimPlaying, setTrimPlaying] = useState(false);
-  const [trimProcessing, setTrimProcessing] = useState(false);
-  const [trimResult, setTrimResult] = useState<ProcessResult | null>(null);
-  const trimVideoRef = useRef<HTMLVideoElement>(null);
 
   // ── Discord state ──
   const [discordFile, setDiscordFile] = useState("");
@@ -184,6 +166,9 @@ export default function App() {
   const setCustomWeights = (v: string) => { setCustomWeightsState(v); localStorage.setItem("smth.customWeights", v); };
 
   const handleFileRef = useRef<(path: string) => void>(() => { });
+  const handleFilesRef = useRef<(paths: string[]) => void>((paths) => {
+    if (paths[0]) handleFileRef.current(paths[0]);
+  });
 
   useEffect(() => {
     getVersion().then(setAppVersion).catch(() => setAppVersion(""));
@@ -227,6 +212,7 @@ export default function App() {
   }, [appAccess]);
 
   useEffect(() => {
+    if (isEditorRoute) return;
     let unlisten: (() => void) | undefined;
     getCurrentWebviewWindow()
       .onDragDropEvent((e) => {
@@ -236,7 +222,7 @@ export default function App() {
         else if (type === "drop") {
           setIsDragOver(false);
           const paths = (e.payload as { type: "drop"; paths: string[] }).paths;
-          if (paths?.[0]) handleFileRef.current(paths[0]);
+          if (paths?.[0]) handleFilesRef.current(paths);
         }
       })
       .then((fn) => { unlisten = fn; });
@@ -269,50 +255,6 @@ export default function App() {
       .then(setMotionRuntimeInstalled)
       .catch(() => setMotionRuntimeInstalled(false));
   }, [view]);
-
-  // ── Trim: markIn / markOut with stable refs ──
-  const markInRef = useRef<() => void>(() => { });
-  const markOutRef = useRef<() => void>(() => { });
-
-  const markIn = () => {
-    const v = trimVideoRef.current;
-    if (!v) return;
-    setTrimPendingIn(v.currentTime);
-  };
-
-  const markOut = () => {
-    const v = trimVideoRef.current;
-    if (!v) return;
-    if (trimPendingIn === null) return;
-    const t = v.currentTime;
-    if (t <= trimPendingIn) return;
-    setTrimSegs(prev => [...prev, { id: `${Date.now()}`, inPoint: trimPendingIn, outPoint: t }]);
-    setTrimPendingIn(null);
-  };
-
-  markInRef.current = markIn;
-  markOutRef.current = markOut;
-
-  useEffect(() => {
-    if (view !== "trim" || !trimFile) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement) return;
-      if (e.code === "Space") {
-        e.preventDefault();
-        const v = trimVideoRef.current;
-        if (!v) return;
-        v.paused ? v.play() : v.pause();
-      } else if (e.code === "KeyI") {
-        e.preventDefault();
-        markInRef.current();
-      } else if (e.code === "KeyO") {
-        e.preventDefault();
-        markOutRef.current();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [view, trimFile]);
 
   const saveFfmpegPath = (val: string) => {
     setFfmpegPath(val);
@@ -395,24 +337,6 @@ export default function App() {
     }
   };
 
-  const handleTrimFile = (path: string) => {
-    setTrimFile(path);
-    setTrimVideoSrc(convertFileSrc(path));
-    setTrimDuration(0);
-    setTrimCurrentTime(0);
-    setTrimSegs([]);
-    setTrimPendingIn(null);
-    setTrimPlaying(false);
-    setTrimResult(null);
-  };
-
-  const pickTrimVideo = async () => {
-    try {
-      const sel = await open({ multiple: false, filters: [{ name: "Video", extensions: VIDEO_EXTS }] });
-      if (typeof sel === "string") handleTrimFile(sel);
-    } catch (e) { console.error(e); }
-  };
-
   const handleCleanFile = (path: string) => {
     setCleanFile(path);
     setCleanResult(null);
@@ -440,29 +364,6 @@ export default function App() {
       setCleanResult({ success: false, message: `Error: ${e}` });
     } finally {
       setCleanProcessing(false);
-    }
-  };
-
-  const exportClip = async () => {
-    if (!ffmpegPath || trimSegs.length === 0) return;
-    setTrimProcessing(true);
-    setTrimResult(null);
-    try {
-      const sorted = [...trimSegs].sort((a, b) => a.inPoint - b.inPoint);
-      const res = await invoke<ProcessResult>("export_segments", {
-        ffmpegPath,
-        inputPath: trimFile,
-        segments: sorted.map(s => ({ start: s.inPoint, end: s.outPoint })),
-      });
-      if (res.success && res.output_path) {
-        setSuccessModal({ message: res.message, outputPath: res.output_path });
-      } else {
-        setTrimResult(res);
-      }
-    } catch (e) {
-      setTrimResult({ success: false, message: `Error: ${e}` });
-    } finally {
-      setTrimProcessing(false);
     }
   };
 
@@ -657,18 +558,78 @@ export default function App() {
     }
   };
 
+  const applyLaunchContext = (context: LaunchContext | null | undefined) => {
+    if (!context?.path) return;
+
+    if (context.action === "motion-blur") {
+      setView("render");
+      void handleRenderFile(context.path);
+      return;
+    }
+
+    if (context.action === "discord") {
+      setView("discord");
+      handleDiscordFile(context.path);
+      return;
+    }
+
+    if (context.action === "clean") {
+      setView("clean");
+      handleCleanFile(context.path);
+      return;
+    }
+
+    setView("compress");
+    handleCompressFile(context.path);
+  };
+
+  useEffect(() => {
+    if (isEditorRoute) return;
+    let unlisten: (() => void) | undefined;
+
+    invoke<LaunchContext | null>("get_initial_launch_context")
+      .then(applyLaunchContext)
+      .catch(() => undefined);
+
+    listen<LaunchContext>("launch-context", (event) => {
+      applyLaunchContext(event.payload);
+    }).then((fn) => { unlisten = fn; });
+
+    return () => { unlisten?.(); };
+  }, []);
+
+  useEffect(() => {
+    if (view !== "render" || !ffmpegPath || !renderFile || renderInputFps !== null || renderDetecting) return;
+    setRenderDetecting(true);
+    invoke<number>("get_video_fps", { ffmpegPath, videoPath: renderFile })
+      .then((fps) => {
+        setRenderInputFps(fps);
+        if (localStorage.getItem("smth.interpFps") === null) {
+          setInterpolateFpsValue(Math.max(renderOutputFps, Math.round(fps * 5)));
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => setRenderDetecting(false));
+  }, [view, ffmpegPath, renderFile, renderInputFps, renderDetecting, renderOutputFps]);
+
   if (view === "trim") {
-    handleFileRef.current = handleTrimFile;
+    handleFileRef.current = () => { };
+    handleFilesRef.current = () => { };
   } else if (view === "render") {
     handleFileRef.current = handleRenderFile;
+    handleFilesRef.current = (paths) => { if (paths[0]) handleRenderFile(paths[0]); };
   } else if (view === "clean") {
     handleFileRef.current = handleCleanFile;
+    handleFilesRef.current = (paths) => { if (paths[0]) handleCleanFile(paths[0]); };
   } else if (view === "compress") {
     handleFileRef.current = handleCompressFile;
+    handleFilesRef.current = (paths) => { if (paths[0]) handleCompressFile(paths[0]); };
   } else if (view === "discord") {
     handleFileRef.current = handleDiscordFile;
+    handleFilesRef.current = (paths) => { if (paths[0]) handleDiscordFile(paths[0]); };
   } else {
     handleFileRef.current = handleCompressFile;
+    handleFilesRef.current = (paths) => { if (paths[0]) handleCompressFile(paths[0]); };
   }
 
   const [successModal, setSuccessModal] = useState<{ message: string; outputPath: string } | null>(null);
@@ -677,7 +638,35 @@ export default function App() {
     try { await invoke("reveal_in_explorer", { path }); } catch (e) { console.error(e); }
   };
 
-  const canExport = !!ffmpegValid && trimSegs.length > 0 && !trimProcessing;
+  const openEditorWindow = async () => {
+    const existing = await WebviewWindow.getByLabel("xype-editor");
+    if (existing) {
+      await existing.setFocus();
+      await existing.maximize();
+      return;
+    }
+
+    const editorUrl = `${window.location.href.split("#")[0]}#/editor`;
+    const editorWindow = new WebviewWindow("xype-editor", {
+      url: editorUrl,
+      title: "Xype Editor BETA",
+      width: 1440,
+      height: 900,
+      minWidth: 1100,
+      minHeight: 720,
+      maximized: true,
+      decorations: true,
+      visible: true,
+    });
+    editorWindow.once("tauri://created", () => {
+      void editorWindow.maximize();
+      void editorWindow.setFocus();
+    });
+    editorWindow.once("tauri://error", (event) => {
+      console.error("Editor window failed:", event.payload);
+    });
+  };
+
   const canRender = !!ffmpegValid && !!renderFile && renderInputFps !== null && !renderProcessing && motionRuntimeInstalled === true;
   const canClean = !!cleanFile && !cleanProcessing;
   const canDiscord = !!ffmpegValid && !!discordFile && !discordProcessing;
@@ -687,13 +676,32 @@ export default function App() {
     : 360;
   const interpolationPresetFps = Array.from(new Set([recommendedInterpolateFps, 360, 480, 960]));
   const cleanFileName = cleanFile.split(/[\\/]/).pop() ?? "";
-  const trimFileName = trimFile.split(/[\\/]/).pop() ?? "";
   const renderFileName = renderFile.split(/[\\/]/).pop() ?? "";
   const discordFileName = discordFile.split(/[\\/]/).pop() ?? "";
   const compressFileName = compressFile.split(/[\\/]/).pop() ?? "";
-  const trimTotalLen = trimSegs.reduce((acc, s) => acc + (s.outPoint - s.inPoint), 0);
   const renderWorkingFps = interpolateOn && interpolateFpsValue > 0 ? interpolateFpsValue : (renderInputFps ?? renderOutputFps);
   const renderFramesBlended = Math.max(1, Math.round(renderWorkingFps / renderOutputFps * blurAmount));
+
+  if (isEditorRoute) {
+    return (
+      <div className="flex h-screen overflow-hidden bg-[#191919] text-white antialiased">
+        <Editor
+          ffmpegPath={ffmpegPath}
+          ffmpegValid={ffmpegValid}
+          isDragOver={isDragOver}
+          onOpenSettings={() => undefined}
+          onSuccess={(message, outputPath) => setSuccessModal({ message, outputPath })}
+        />
+        {successModal && (
+          <ExportSuccessModal
+            data={successModal}
+            onClose={() => setSuccessModal(null)}
+            onReveal={() => { revealInExplorer(successModal.outputPath); setSuccessModal(null); }}
+          />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="relative flex h-screen overflow-hidden bg-[#0b0c0e] text-white antialiased">
@@ -907,174 +915,34 @@ export default function App() {
           </>
         )}
 
-        {/* ─ Trim ─ */}
+        {/* Editor */}
         {view === "trim" && (
           <>
             <Header {...VIEW_META.trim} />
-
-            {/* Empty state */}
-            {!trimFile && (
-              <main className="flex-1 flex flex-col overflow-auto">
-                <div className="flex-1 flex flex-col gap-4 p-5">
-                  {!ffmpegValid && <FfmpegWarning onClick={() => setView("settings")} />}
-                  <DropZone key="empty" isDragOver={isDragOver} onClick={pickTrimVideo}
-                    label="Drop video here" hint="or click to browse · MP4, MOV, MKV, AVI…" />
-                </div>
-              </main>
-            )}
-
-            {/* Loaded state — true flex fill, video takes all spare height */}
-            {!!trimFile && (
-              <main className="flex-1 overflow-hidden flex flex-col">
-                <div key="filled" className="flex-1 flex flex-col gap-4 p-5 min-h-0">
-
-                  {/* Video — flex-1 fills remaining vertical space */}
-                  <div className="anim-scale-in flex-1 min-h-[120px] rounded-[16px] overflow-hidden bg-black border border-white/[0.075]">
-                    <video
-                      ref={trimVideoRef}
-                      src={trimVideoSrc}
-                      className="w-full h-full object-contain"
-                      onLoadedMetadata={(e) => {
-                        const d = e.currentTarget.duration;
-                        setTrimDuration(d);
-                        setTrimCurrentTime(0);
-                      }}
-                      onTimeUpdate={(e) => setTrimCurrentTime(e.currentTarget.currentTime)}
-                      onPlay={() => setTrimPlaying(true)}
-                      onPause={() => setTrimPlaying(false)}
-                    />
-                  </div>
-
-                  {/* Controls row */}
-                  <div className="anim-slide-up flex items-center gap-3 shrink-0" style={{ animationDelay: "40ms" }}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const v = trimVideoRef.current;
-                        if (!v) return;
-                        v.paused ? v.play() : v.pause();
-                      }}
-                      className="w-9 h-9 rounded-xl bg-[#111216] border border-white/[0.075] text-white/70 flex items-center justify-center hover:bg-white/[0.05] hover:text-white transition-colors shrink-0"
-                    >
-                      {trimPlaying ? <PiPauseFill className="text-sm" /> : <PiPlayFill className="text-sm" />}
-                    </button>
-                    <span className="max-w-[260px] truncate text-[12px] font-medium text-white/55">{trimFileName}</span>
-                    <span className="h-4 w-px bg-white/[0.075]" />
-                    <span className="text-sm font-mono tabular-nums text-white/70">{fmt(trimCurrentTime)}</span>
-                    <span className="text-white/20 text-sm">/</span>
-                    <span className="text-sm font-mono tabular-nums text-white/40">{fmt(trimDuration)}</span>
-                    <div className="flex-1" />
-                    {(trimSegs.length > 0 || trimPendingIn !== null) && (
-                      <button type="button"
-                        onClick={() => { setTrimSegs([]); setTrimPendingIn(null); }}
-                        className="text-[12px] text-white/30 hover:text-white/80 transition-colors">
-                        Clear all
-                      </button>
-                    )}
-                    <button type="button"
-                      onClick={() => { setTrimFile(""); setTrimVideoSrc(""); setTrimSegs([]); setTrimPendingIn(null); setTrimResult(null); }}
-                      className="text-white/30 hover:text-white/80 transition-colors shrink-0">
-                      <PiXCircleFill className="text-lg" />
-                    </button>
-                  </div>
-
-                  {/* Timeline */}
-                  <div className="anim-slide-up shrink-0" style={{ animationDelay: "70ms" }}>
-                    <Timeline
-                      duration={trimDuration}
-                      currentTime={trimCurrentTime}
-                      segments={trimSegs}
-                      pendingIn={trimPendingIn}
-                      videoRef={trimVideoRef}
-                    />
-                    <div className="flex items-center justify-between mt-1.5 px-0.5">
-                      <span className="text-[11px] font-mono tabular-nums text-white/30">
-                        {trimPendingIn !== null
-                          ? <span className="anim-fade text-amber-400/80">[ {fmt(trimPendingIn)} …</span>
-                          : trimSegs.length > 0
-                            ? `${trimSegs.length} segment${trimSegs.length > 1 ? "s" : ""}`
-                            : "press I to mark in"
-                        }
-                      </span>
-                      <span className="text-[11px] font-mono tabular-nums text-white/30">
-                        {trimTotalLen > 0 ? fmt(trimTotalLen) : ""}
-                      </span>
+            <main className="flex-1 overflow-auto">
+              <div className="flex min-h-full flex-col p-5">
+                {!ffmpegValid && <FfmpegWarning onClick={() => setView("settings")} />}
+                <div className="flex flex-1 items-center justify-center">
+                  <div className="w-full max-w-[620px] border border-white/[0.075] bg-[#111216] p-5">
+                    <div className="flex items-center gap-3">
+                      <div className="grid h-10 w-10 place-items-center border border-white/[0.075] bg-white/[0.035] text-white/65">
+                        <PiScissorsDuotone className="text-xl" />
+                      </div>
+                      <div>
+                        <p className="text-[15px] font-medium text-white/90">Xype Editor BETA</p>
+                        <p className="mt-1 text-[12px] text-white/40">Opens in a dedicated AE-style workspace for TikTok edits.</p>
+                      </div>
                     </div>
-                  </div>
-
-                  {/* Set In / Set Out */}
-                  <div className="anim-slide-up flex gap-3 shrink-0" style={{ animationDelay: "100ms" }}>
-                    <button type="button" onClick={markIn}
-                      className={cn(
-                        "flex-1 h-10 flex items-center justify-center gap-2 rounded-xl border text-sm font-medium transition-colors",
-                        trimPendingIn !== null
-                          ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
-                          : "border-white/[0.075] bg-[#111216] text-white/70 hover:bg-white/[0.05] hover:text-white"
-                      )}>
-                      <span className="font-mono font-bold opacity-50 text-base leading-none">[</span>
-                      <span>Set In</span>
-                      <kbd className="text-[10px] font-mono opacity-35">I</kbd>
+                    <button type="button" onClick={() => void openEditorWindow()}
+                      className="mt-5 h-10 w-full bg-white text-[13px] font-medium text-black transition-colors hover:bg-white/90">
+                      Open Editor Window
                     </button>
-                    <button type="button" onClick={markOut} disabled={trimPendingIn === null}
-                      className={cn(
-                        "flex-1 h-10 flex items-center justify-center gap-2 rounded-xl border text-sm font-medium transition-colors",
-                        trimPendingIn !== null
-                          ? "border-white/[0.075] bg-[#111216] text-white/70 hover:bg-white/[0.05] hover:text-white cursor-pointer"
-                          : "border-white/[0.03] text-white/20 cursor-not-allowed"
-                      )}>
-                      <span>Set Out</span>
-                      <kbd className="text-[10px] font-mono opacity-35">O</kbd>
-                      <span className="font-mono font-bold opacity-50 text-base leading-none">]</span>
-                    </button>
-                  </div>
-
-                  {/* Segment list — capped so video doesn't shrink too much */}
-                  {trimSegs.length > 0 && (
-                    <div className="anim-slide-up shrink-0 space-y-1 max-h-[120px] overflow-y-auto" style={{ animationDelay: "120ms" }}>
-                      {trimSegs.map((seg, i) => (
-                        <div key={seg.id}
-                          className="flex items-center gap-2 px-3 py-2 rounded-xl border border-white/[0.075] bg-[#111216] hover:bg-white/[0.05] transition-colors group">
-                          <span className="text-[10px] font-semibold text-white/30 w-3 shrink-0 tabular-nums">{i + 1}</span>
-                          <span className="font-mono text-[12px] flex-1 text-white/70 tabular-nums">
-                            {fmt(seg.inPoint)}
-                            <span className="text-white/30 mx-1.5">→</span>
-                            {fmt(seg.outPoint)}
-                          </span>
-                          <span className="text-[11px] font-mono tabular-nums text-white/30 shrink-0">{fmt(seg.outPoint - seg.inPoint)}</span>
-                          <button type="button"
-                            onClick={() => setTrimSegs(prev => prev.filter(s => s.id !== seg.id))}
-                            className="opacity-0 group-hover:opacity-100 text-white/30 hover:text-destructive transition-colors ml-1 shrink-0">
-                            <PiXCircleFill className="text-sm" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Export — pinned at bottom */}
-                  <div className="shrink-0 space-y-3 pt-1">
-                    <div className="border-t border-white/[0.075]" />
-                    <button type="button" onClick={exportClip} disabled={!canExport}
-                      className={cn(
-                        "w-full h-10 rounded-xl text-sm font-medium transition-colors",
-                        canExport
-                          ? "bg-white text-black hover:bg-white/90"
-                          : "bg-white/5 text-white/20 cursor-not-allowed"
-                      )}>
-                      {trimProcessing
-                        ? <span className="flex items-center justify-center gap-2"><PiSpinnerGapBold className="animate-spin" />Exporting…</span>
-                        : trimSegs.length > 1
-                          ? `Merge & Export (${trimSegs.length} segments)`
-                          : "Export Clip"}
-                    </button>
-                    {trimResult && <ResultBanner result={trimResult} />}
                   </div>
                 </div>
-              </main>
-            )}
+              </div>
+            </main>
           </>
         )}
-
         {/* ─ Render ─ */}
         {view === "render" && (
           <>
@@ -2200,86 +2068,6 @@ function DropZone({
   )
 }
 
-// ── Multi-segment timeline with smooth drag ──
-function Timeline({ duration, currentTime, segments, pendingIn, videoRef }: {
-  duration: number;
-  currentTime: number;
-  segments: Seg[];
-  pendingIn: number | null;
-  videoRef: React.RefObject<HTMLVideoElement | null>;
-}) {
-  const barRef = useRef<HTMLDivElement>(null);
-  const isDragging = useRef(false);
-  // Keep duration fresh inside the effect closure without re-registering listeners
-  const vals = useRef(duration);
-  vals.current = duration;
-
-  useEffect(() => {
-    const seek = (clientX: number) => {
-      if (!barRef.current || vals.current <= 0) return;
-      const rect = barRef.current.getBoundingClientRect();
-      const t = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * vals.current;
-      if (videoRef.current) videoRef.current.currentTime = t;
-    };
-    const onMove = (e: MouseEvent) => { if (isDragging.current) seek(e.clientX); };
-    const onUp = () => { isDragging.current = false; };
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-    return () => {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-    };
-  }, [videoRef]);
-
-  const onMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    isDragging.current = true;
-    if (!barRef.current || vals.current <= 0) return;
-    const rect = barRef.current.getBoundingClientRect();
-    const t = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) * vals.current;
-    if (videoRef.current) videoRef.current.currentTime = t;
-  };
-
-  const pct = (t: number) => duration > 0 ? `${(t / duration) * 100}%` : "0%";
-
-  return (
-    <div
-      ref={barRef}
-      onMouseDown={onMouseDown}
-      className="relative h-10 rounded-xl overflow-visible cursor-pointer"
-      style={{ userSelect: "none" }}
-    >
-      <div className="absolute inset-0 rounded-xl bg-white/[0.04] border border-white/[0.075]" />
-
-      {segments.map((seg) => {
-        const inPct = duration > 0 ? (seg.inPoint / duration) * 100 : 0;
-        const outPct = duration > 0 ? (seg.outPoint / duration) * 100 : 100;
-        return (
-          <div key={seg.id}
-            className="absolute inset-y-0 bg-white/10 border-x-2 border-white/30 rounded-sm"
-            style={{ left: `${inPct}%`, width: `${outPct - inPct}%` }}
-          />
-        );
-      })}
-
-      {pendingIn !== null && (
-        <div className="absolute inset-y-0 w-0.5 bg-amber-400/80 pointer-events-none"
-          style={{ left: pct(pendingIn) }}>
-          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-0 h-0"
-            style={{ borderLeft: "4px solid transparent", borderRight: "4px solid transparent", borderTop: "5px solid rgba(251,191,36,0.8)" }} />
-        </div>
-      )}
-
-      {/* Playhead — slightly wider grab target */}
-      <div className="absolute inset-y-0 flex items-center justify-center pointer-events-none"
-        style={{ left: pct(currentTime), transform: "translateX(-50%)", width: "12px" }}>
-        <div className="w-px h-full bg-white/60" />
-        <div className="absolute top-0 w-2.5 h-2.5 rounded-full bg-white border-2 border-black"
-          style={{ transform: "translateY(-30%)" }} />
-      </div>
-    </div>
-  );
-}
-
 // ── Header ──
 function Header({
   icon,
@@ -2377,3 +2165,5 @@ function SidebarItem({
     </TooltipProvider>
   )
 }
+
+

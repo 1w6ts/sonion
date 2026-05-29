@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
@@ -150,6 +150,13 @@ pub struct ProcessResult {
     pub success: bool,
     pub message: String,
     pub output_path: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchContext {
+    pub action: String,
+    pub path: String,
 }
 
 fn normalize_compress_encoder(encoder: &str) -> (&'static str, &'static str) {
@@ -520,6 +527,18 @@ pub struct Segment {
     pub end: f64,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EditorClip {
+    #[serde(rename = "inputPath")]
+    pub input_path: String,
+    pub kind: String,
+    pub start: f64,
+    pub end: f64,
+    #[serde(rename = "timelineStart")]
+    pub timeline_start: f64,
+    pub layer: i32,
+}
+
 #[tauri::command]
 async fn export_segments(
     ffmpeg_path: &str,
@@ -692,6 +711,186 @@ async fn export_segments(
         Ok(out) => ProcessResult {
             success: false,
             message: format!("Merge failed: {}", String::from_utf8_lossy(&out.stderr)),
+            output_path: None,
+        },
+        Err(e) => ProcessResult {
+            success: false,
+            message: format!("Failed: {e}"),
+            output_path: None,
+        },
+    })
+}
+
+#[tauri::command]
+fn save_editor_project(path: String, contents: String) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    if path.extension().and_then(|s| s.to_str()) != Some("son") {
+        return Err("Project file must use the .son extension".to_string());
+    }
+    fs::write(path, contents).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn load_editor_project(path: String) -> Result<String, String> {
+    let path = PathBuf::from(path);
+    fs::read_to_string(path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn export_editor_project(
+    ffmpeg_path: String,
+    project_name: String,
+    clips: Vec<EditorClip>,
+) -> Result<ProcessResult, String> {
+    if clips.is_empty() {
+        return Ok(ProcessResult {
+            success: false,
+            message: "No clips on the timeline".to_string(),
+            output_path: None,
+        });
+    }
+
+    let ffmpeg = PathBuf::from(&ffmpeg_path);
+    if !ffmpeg.exists() {
+        return Ok(ProcessResult {
+            success: false,
+            message: "FFmpeg not found".to_string(),
+            output_path: None,
+        });
+    }
+
+    let mut video_clips: Vec<&EditorClip> = clips.iter().filter(|clip| clip.kind == "video").collect();
+    video_clips.sort_by(|a, b| {
+        a.timeline_start
+            .partial_cmp(&b.timeline_start)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.layer.cmp(&b.layer))
+    });
+    let audio_clips: Vec<&EditorClip> = clips.iter().filter(|clip| clip.kind == "audio").collect();
+
+    if video_clips.is_empty() {
+        return Ok(ProcessResult {
+            success: false,
+            message: "Add at least one video clip before exporting".to_string(),
+            output_path: None,
+        });
+    }
+
+    for clip in &clips {
+        if clip.end <= clip.start {
+            return Ok(ProcessResult {
+                success: false,
+                message: "A timeline clip has an invalid in/out range".to_string(),
+                output_path: None,
+            });
+        }
+        if !PathBuf::from(&clip.input_path).exists() {
+            return Ok(ProcessResult {
+                success: false,
+                message: format!("Missing media: {}", clip.input_path),
+                output_path: None,
+            });
+        }
+    }
+
+    let first_input = PathBuf::from(&video_clips[0].input_path);
+    let default_dir = PathBuf::from(".");
+    let output_dir = first_input.parent().unwrap_or(&default_dir);
+    let safe_name = project_name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect::<String>();
+    let output_path = output_dir.join(format!("{}_edit.mp4", if safe_name.is_empty() { "xype" } else { &safe_name }));
+    if output_path.exists() {
+        let _ = fs::remove_file(&output_path);
+    }
+
+    let mut cmd = ffmpeg_cmd(&ffmpeg);
+    cmd.arg("-y");
+    for clip in &video_clips {
+        cmd.arg("-i").arg(&clip.input_path);
+    }
+    for clip in &audio_clips {
+        cmd.arg("-i").arg(&clip.input_path);
+    }
+
+    let mut filter_parts: Vec<String> = Vec::new();
+    for (i, clip) in video_clips.iter().enumerate() {
+        filter_parts.push(format!(
+            "[{i}:v]trim=start={}:end={},setpts=PTS-STARTPTS,scale=1080:-2:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1[v{i}]",
+            clip.start, clip.end
+        ));
+        filter_parts.push(format!(
+            "[{i}:a]atrim=start={}:end={},asetpts=PTS-STARTPTS,aresample=48000[a{i}]",
+            clip.start, clip.end
+        ));
+    }
+
+    let concat_inputs = (0..video_clips.len())
+        .map(|i| format!("[v{i}][a{i}]"))
+        .collect::<String>();
+    filter_parts.push(format!(
+        "{}concat=n={}:v=1:a=1[video][baseaudio]",
+        concat_inputs,
+        video_clips.len()
+    ));
+
+    let audio_offset = video_clips.len();
+    let mut audio_mix_labels = vec!["[baseaudio]".to_string()];
+    for (i, clip) in audio_clips.iter().enumerate() {
+        let input_index = audio_offset + i;
+        let delay_ms = (clip.timeline_start.max(0.0) * 1000.0).round() as i64;
+        filter_parts.push(format!(
+            "[{input_index}:a]atrim=start={}:end={},asetpts=PTS-STARTPTS,aresample=48000,adelay={delay_ms}:all=1[music{i}]",
+            clip.start, clip.end
+        ));
+        audio_mix_labels.push(format!("[music{i}]"));
+    }
+
+    let audio_out = if audio_clips.is_empty() {
+        "[baseaudio]".to_string()
+    } else {
+        let joined = audio_mix_labels.join("");
+        filter_parts.push(format!(
+            "{}amix=inputs={}:duration=first:dropout_transition=0[audio]",
+            joined,
+            audio_mix_labels.len()
+        ));
+        "[audio]".to_string()
+    };
+
+    let filter = filter_parts.join(";");
+    let result = cmd
+        .arg("-filter_complex")
+        .arg(filter)
+        .arg("-map")
+        .arg("[video]")
+        .arg("-map")
+        .arg(audio_out)
+        .arg("-c:v")
+        .arg("libx264")
+        .arg("-preset")
+        .arg("veryfast")
+        .arg("-crf")
+        .arg("18")
+        .arg("-c:a")
+        .arg("aac")
+        .arg("-b:a")
+        .arg("192k")
+        .arg("-movflags")
+        .arg("+faststart")
+        .arg(&output_path)
+        .output();
+
+    Ok(match result {
+        Ok(out) if out.status.success() && output_path.exists() => ProcessResult {
+            success: true,
+            message: "Xype editor timeline exported.".to_string(),
+            output_path: output_path.to_str().map(|s| s.to_string()),
+        },
+        Ok(out) => ProcessResult {
+            success: false,
+            message: format!("Export failed: {}", String::from_utf8_lossy(&out.stderr)),
             output_path: None,
         },
         Err(e) => ProcessResult {
@@ -1823,6 +2022,109 @@ async fn reveal_in_explorer(path: String) {
     }
 }
 
+fn normalize_launch_action(action: &str) -> Option<&'static str> {
+    match action.trim().to_ascii_lowercase().as_str() {
+        "open" | "default" => Some("open"),
+        "compress" | "quality-compress" => Some("compress"),
+        "motion-blur" | "motionblur" | "render" => Some("motion-blur"),
+        "discord" | "discord-compress" => Some("discord"),
+        "clean" | "tiktok" | "tiktok-optimizer" => Some("clean"),
+        _ => None,
+    }
+}
+
+fn is_supported_video_path(path: &str) -> bool {
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase());
+    matches!(
+        ext.as_deref(),
+        Some("mp4" | "mov" | "mkv" | "avi" | "webm" | "m4v")
+    )
+}
+
+fn parse_launch_context_from_args(args: &[String]) -> Option<LaunchContext> {
+    let mut action: Option<String> = None;
+    let mut path: Option<String> = None;
+    let mut iter = args.iter().skip(1).peekable();
+
+    while let Some(arg) = iter.next() {
+        let trimmed = arg.trim_matches('"').trim();
+        if let Some(value) = trimmed.strip_prefix("--xype-action=") {
+            action = normalize_launch_action(value).map(str::to_string);
+            continue;
+        }
+        if trimmed == "--xype-action" {
+            if let Some(value) = iter.next() {
+                action = normalize_launch_action(value.trim_matches('"').trim()).map(str::to_string);
+            }
+            continue;
+        }
+        if trimmed.starts_with("xype://") {
+            continue;
+        }
+        if is_supported_video_path(trimmed) {
+            path = Some(trimmed.to_string());
+        }
+    }
+
+    path.map(|path| LaunchContext {
+        action: action.unwrap_or_else(|| "open".to_string()),
+        path,
+    })
+}
+
+#[tauri::command]
+fn get_initial_launch_context() -> Option<LaunchContext> {
+    let args: Vec<String> = std::env::args().collect();
+    parse_launch_context_from_args(&args)
+}
+
+#[cfg(windows)]
+fn reg_add_value(key: &str, name: Option<&str>, value: &str) {
+    let mut cmd = hidden_cmd(&PathBuf::from("reg.exe"));
+    cmd.arg("add").arg(key);
+    match name {
+        Some(name) => {
+            cmd.arg("/v").arg(name);
+        }
+        None => {
+            cmd.arg("/ve");
+        }
+    }
+    let _ = cmd.arg("/t").arg("REG_SZ").arg("/d").arg(value).arg("/f").status();
+}
+
+#[cfg(windows)]
+fn register_windows_video_context_menu() {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let exe = exe.to_string_lossy();
+    let root = r"HKCU\Software\Classes\SystemFileAssociations\video\shell\Xype";
+    let shell = format!(r"{}\shell", root);
+
+    reg_add_value(root, Some("MUIVerb"), "Xype");
+    reg_add_value(root, Some("Icon"), &exe);
+    reg_add_value(root, Some("SubCommands"), "");
+
+    let entries = [
+        ("open", "Open in Xype", "open"),
+        ("compress", "Compress", "compress"),
+        ("motion-blur", "Motion Blur", "motion-blur"),
+    ];
+
+    for (key, label, action) in entries {
+        let item = format!(r"{}\{}", shell, key);
+        let command = format!(r"{}\command", item);
+        let command_value = format!("\"{}\" --xype-action {} \"%1\"", exe, action);
+        reg_add_value(&item, Some("MUIVerb"), label);
+        reg_add_value(&item, Some("Icon"), &exe);
+        reg_add_value(&command, None, &command_value);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Windows deep-link second-instance shortcut: search ALL args for a xype:// URL,
@@ -1853,7 +2155,18 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if let Some(context) = parse_launch_context_from_args(&args) {
+                let _ = app.emit("launch-context", context);
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_focus();
+                }
+            }
+        }))
         .setup(|app| {
+            #[cfg(windows)]
+            register_windows_video_context_menu();
+
             #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
             app.deep_link().register_all()?;
 
@@ -1880,6 +2193,9 @@ pub fn run() {
             validate_ffmpeg,
             get_video_fps,
             export_segments,
+            save_editor_project,
+            load_editor_project,
+            export_editor_project,
             render_video,
             read_smoothie_recipe,
             render_video_motion_runtime,
@@ -1889,6 +2205,7 @@ pub fn run() {
             compress_video,
             compress_for_discord,
             reveal_in_explorer,
+            get_initial_launch_context,
             get_auth_session,
             logout_auth_session,
             check_app_access,
