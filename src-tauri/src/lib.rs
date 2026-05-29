@@ -2097,6 +2097,26 @@ fn reg_add_value(key: &str, name: Option<&str>, value: &str) {
 }
 
 #[cfg(windows)]
+fn reg_delete_value(key: &str, name: &str) {
+    let _ = hidden_cmd(&PathBuf::from("reg.exe"))
+        .arg("delete")
+        .arg(key)
+        .arg("/v")
+        .arg(name)
+        .arg("/f")
+        .status();
+}
+
+#[cfg(windows)]
+fn reg_delete_key(key: &str) {
+    let _ = hidden_cmd(&PathBuf::from("reg.exe"))
+        .arg("delete")
+        .arg(key)
+        .arg("/f")
+        .status();
+}
+
+#[cfg(windows)]
 fn register_windows_video_context_menu() {
     let Ok(exe) = std::env::current_exe() else {
         return;
@@ -2121,33 +2141,40 @@ fn register_windows_video_context_menu() {
         )
     }));
 
+    let command_root = r"HKCU\Software\Classes\Xype.ContextMenu";
+    let command_shell = format!(r"{}\shell", command_root);
+    reg_delete_key(command_root);
+
+    let entries = [
+        ("01MotionBlur", "Motion Blur", "motion-blur"),
+        ("02DiscordCompress", "Discord Compress", "discord"),
+        ("03Compress", "Compress", "compress"),
+    ];
+
+    for (command_key, label, action) in entries {
+        let item = format!(r"{}\{}", command_shell, command_key);
+        let command = format!(r"{}\command", item);
+        let command_value = format!("\"{}\" --xype-action {} \"%1\"", exe, action);
+        reg_add_value(&item, None, label);
+        reg_add_value(&item, Some("MUIVerb"), label);
+        reg_add_value(&item, Some("Icon"), &exe);
+        reg_add_value(&command, None, &command_value);
+    }
+
     for root in roots {
         let shell = format!(r"{}\shell", root);
 
         reg_add_value(&root, None, "Send to xype");
         reg_add_value(&root, Some("MUIVerb"), "Send to xype");
         reg_add_value(&root, Some("Icon"), &exe);
-        reg_add_value(&root, Some("SubCommands"), "");
+        reg_add_value(&root, Some("ExtendedSubCommandsKey"), "Xype.ContextMenu");
+        reg_delete_value(&root, "SubCommands");
 
         if root == r"HKCU\Software\Classes\*\shell\Xype" {
             reg_add_value(&root, Some("AppliesTo"), &applies_to);
         }
 
-        let entries = [
-            ("motion-blur", "Motion Blur", "motion-blur"),
-            ("discord", "Discord Compress", "discord"),
-            ("compress", "Compress", "compress"),
-        ];
-
-        for (key, label, action) in entries {
-            let item = format!(r"{}\{}", shell, key);
-            let command = format!(r"{}\command", item);
-            let command_value = format!("\"{}\" --xype-action {} \"%1\"", exe, action);
-            reg_add_value(&item, None, label);
-            reg_add_value(&item, Some("MUIVerb"), label);
-            reg_add_value(&item, Some("Icon"), &exe);
-            reg_add_value(&command, None, &command_value);
-        }
+        reg_delete_key(&shell);
     }
 }
 
